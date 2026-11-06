@@ -1,18 +1,7 @@
 #requires -Version 7.2
 Set-StrictMode -Version Latest
 
-function Get-OpsLocalDirectory {
-    if (-not $env:LOCALAPPDATA) { throw 'Windows の LOCALAPPDATA が必要です。' }
-    Join-Path $env:LOCALAPPDATA 'AzureOpsSkills'
-}
-
-function Assert-OpsGuid {
-    param([string]$Value, [string]$Label = 'ID')
-    $parsedId = [guid]::Empty
-    if (-not [guid]::TryParse($Value, [ref]$parsedId) -or $parsedId -eq [guid]::Empty) {
-        throw "$Label に有効な GUID が必要です。"
-    }
-}
+. (Join-Path $PSScriptRoot 'Authentication.ps1')
 
 function Assert-OpsResourceScope {
     param([string]$ResourceId, [string]$SubscriptionId)
@@ -27,74 +16,65 @@ function Assert-OpsResourceScope {
     }
 }
 
-function Read-OpsConnection {
-    param([string]$Path = (Join-Path (Get-OpsLocalDirectory) 'connection.json'))
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "接続設定がありません。管理者向け初期設定を実施してください: $Path"
+function Get-OpsArmErrorSummary {
+    param($Response)
+    # Never emit arbitrary message text, claims, parameters, headers, or the response body.
+    function Read-ErrorField($Object, [string]$Name) {
+        if ($Object -is [System.Collections.IDictionary]) {
+            foreach ($key in $Object.Keys) { if ([string]$key -ieq $Name) { return $Object[$key] } }
+        } elseif ($null -ne $Object -and $Object.PSObject.Properties[$Name]) { return $Object.$Name }
+        return $null
     }
-    $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
-    $allowed = @('tenantId','subscriptionIds','sandboxSubscriptionId','applicationId','servicePrincipalObjectId','certificateThumbprint')
-    foreach ($key in $config.Keys) {
-        if ($key -notin $allowed) { throw '接続設定に未対応の項目があります。秘密情報は保存しないでください。' }
+    $codes = [Collections.Generic.List[string]]::new()
+    $extended = [Collections.Generic.List[string]]::new()
+    $quota = @{}
+    $state = @{parsed=$false; quotaEvidence=$false; nodes=0}
+    function Read-ErrorNode($Node, [int]$Depth=0) {
+        if ($Depth -gt 8 -or $state.nodes -ge 100 -or $Node -isnot [System.Collections.IDictionary]) { return }
+        $state.nodes++
+        foreach ($field in @('code','extendedCode')) {
+            $value = Read-ErrorField $Node $field
+            if ($value -is [string] -and $value -cmatch '^[A-Za-z0-9_.-]{1,128}$') {
+                if ($field -eq 'code') { $codes.Add($value) } else { $extended.Add($value) }
+            }
+        }
+        $message = Read-ErrorField $Node 'message'
+        if ($message -is [string] -and $message.Length -le 32768 -and
+            $message -match 'Operation\s+cannot\s+be\s+completed\s+without\s+additional\s+quota') {
+            $state.quotaEvidence=$true
+            # Only well-known numeric fields are retained, including zero. No free-form text.
+            $patterns = @{
+                CurrentLimit='Current\s+Limit\s*\([^\r\n)]{1,64}\)\s*:\s*(\d{1,9})\b'
+                CurrentUsage='Current\s+Usage\s*:\s*(\d{1,9})\b'
+                Required='Amount\s+required\s+for\s+this\s+deployment\s*\([^\r\n)]{1,64}\)\s*:\s*(\d{1,9})\b'
+                MinimumNewLimit='New\s+Limit\s+that\s+you\s+should\s+request\s+to\s+enable\s+this\s+deployment\s*:\s*(\d{1,9})\b'
+            }
+            foreach ($name in $patterns.Keys) { if ($message -match $patterns[$name]) { $quota[$name]=[int]$Matches[1] } }
+        }
+        foreach ($field in @('error','details','innererror','errorEntity')) {
+            $child = Read-ErrorField $Node $field
+            foreach ($entry in @($child)) { Read-ErrorNode $entry ($Depth+1) }
+        }
     }
-    foreach ($key in $allowed) {
-        if (-not $config.ContainsKey($key)) { throw "接続設定に $key が必要です。" }
+    $content = Read-ErrorField $Response 'Content'
+    if ($content -is [string] -and $content.Length -le 1048576) {
+        try {
+            $body = $content | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+            if ($body -is [System.Collections.IDictionary]) { $state.parsed=$true; Read-ErrorNode $body }
+        } catch { $state.parsed=$false }
     }
-    foreach ($key in @('tenantId','applicationId','servicePrincipalObjectId','sandboxSubscriptionId')) {
-        Assert-OpsGuid $config[$key] $key
+    $category = 'Unknown'
+    if ($state.quotaEvidence -or @($codes | Where-Object { $_ -in @('SubscriptionIsOverQuotaForSku','InternalSubscriptionIsOverQuotaForSku','QuotaExceeded') }).Count) { $category='Quota' }
+    elseif (@($codes | Where-Object { $_ -in @('MissingSubscriptionRegistration','NoRegisteredProviderFound') }).Count) { $category='ProviderRegistration' }
+    elseif (@($codes | Where-Object { $_ -in @('InvalidAuthenticationToken','ExpiredAuthenticationToken','AuthenticationFailed') }).Count) { $category='Authentication' }
+    elseif (@($codes | Where-Object { $_ -in @('AuthorizationFailed','LinkedAuthorizationFailed','DenyAssignmentAuthorizationFailed') }).Count) { $category='Authorization' }
+    $status=0
+    [void][int]::TryParse([string](Read-ErrorField $Response 'StatusCode'),[ref]$status)
+    [pscustomobject][ordered]@{
+        HttpStatus=$status; ErrorCodes=@($codes | Select-Object -Unique)
+        ExtendedCodes=@($extended | Select-Object -Unique); CategoryHint=$category
+        Quota=$quota; BodyParsed=$state.parsed; MessageOmitted=$true
     }
-    if ($config.subscriptionIds -isnot [array] -or $config.subscriptionIds.Count -eq 0) {
-        throw 'subscriptionIds は1つ以上のIDの配列にしてください。'
-    }
-    foreach ($id in $config.subscriptionIds) { Assert-OpsGuid $id 'subscriptionIds' }
-    if ($config.sandboxSubscriptionId -notin $config.subscriptionIds) {
-        throw 'Sandboxは許可済みサブスクリプションのいずれかを指定してください。'
-    }
-    if ($config.certificateThumbprint -notmatch '^[A-Fa-f0-9]{40}$') { throw '証明書の拇印が不正です。' }
-    return $config
-}
-
-function Select-OpsSubscription {
-    param([hashtable]$Config,[string]$SubscriptionId)
-    Assert-OpsGuid $SubscriptionId 'SubscriptionId'
-    if ($SubscriptionId -notin $Config.subscriptionIds) { throw '許可済み設定にないサブスクリプションです。' }
-    $selected = $Config.Clone()
-    $selected.subscriptionId = $SubscriptionId
-    return $selected
-}
-
-function Assert-OpsContext {
-    param($Context, [hashtable]$Config, [ValidateSet('User','ServicePrincipal')][string]$AccountType)
-    if (-not $Context -or $Context.Tenant.Id -ne $Config.tenantId -or
-        $Context.Subscription.Id -ne $Config.subscriptionId -or
-        $Context.Account.Type -ne $AccountType -or $Context.Environment.Name -ne 'AzureCloud') {
-        throw '接続先または認証種別が想定と異なるため停止しました。'
-    }
-    if ($AccountType -eq 'ServicePrincipal' -and $Context.Account.Id -ne $Config.applicationId) {
-        throw '専用アプリ以外の接続は使えません。'
-    }
-}
-
-function Connect-OpsApplication {
-    param([hashtable]$Config)
-    Import-Module Az.Accounts -ErrorAction Stop
-    $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$($Config.certificateThumbprint)" -ErrorAction Stop
-    if (-not $cert.HasPrivateKey -or $cert.NotAfter -le (Get-Date) -or $cert.NotBefore -gt (Get-Date)) {
-        throw '証明書が利用できません。登録・更新手順を確認してください。'
-    }
-    Disable-AzContextAutosave -Scope Process | Out-Null
-    $parameters = @{
-        ServicePrincipal = $true
-        Tenant = $Config.tenantId
-        Subscription = $Config.subscriptionId
-        ApplicationId = $Config.applicationId
-        CertificateThumbprint = $Config.certificateThumbprint
-        Scope = 'Process'
-        SkipContextPopulation = $true
-        ErrorAction = 'Stop'
-    }
-    Connect-AzAccount @parameters | Out-Null
-    Assert-OpsContext (Get-AzContext) $Config 'ServicePrincipal'
 }
 
 function Get-OpsServiceKind {
@@ -110,13 +90,33 @@ function Get-OpsServiceKind {
 
 function ConvertTo-OpsInventoryRow {
     param([System.Collections.IDictionary]$Resource)
+    $resourceId = [string]$Resource['id']
+    if ($resourceId -notmatch '^/subscriptions/(?<subscription>[0-9a-f-]{36})/resourceGroups/(?<group>[^/]+)/providers/') {
+        throw '一覧のリソースIDからサブスクリプションとリソースグループを確認できません。'
+    }
+    $subscriptionId = $Matches.subscription
+    $resourceGroupName = $Matches.group
+    Assert-OpsResourceScope $resourceId $subscriptionId
     $properties = $Resource['properties']
     if (-not $properties) { $properties = @{} }
     $identity = $Resource['identity']
     if (-not $identity) { $identity = @{} }
+    if ($properties -isnot [System.Collections.IDictionary] -or $identity -isnot [System.Collections.IDictionary]) {
+        throw 'Inventory metadata must be an object.'
+    }
+    foreach ($value in @($Resource['name'],$Resource['type'],$Resource['kind'],$Resource['location'],
+        $properties['state'],$properties['provisioningState'],$properties['serverFarmId'],
+        $properties['publicNetworkAccess'],$identity['type'])) {
+        if ($null -ne $value -and $value -isnot [string]) { throw 'Inventory text metadata must be a string.' }
+    }
+    if ($null -ne $properties['httpsOnly'] -and $properties['httpsOnly'] -isnot [bool]) {
+        throw 'Inventory HTTPS metadata must be a boolean.'
+    }
     # Allowlist only. Never return definitions, parameters, tags, URLs, app settings or the raw response.
     [pscustomobject][ordered]@{
-        ResourceId = $Resource['id']
+        ResourceId = $resourceId
+        SubscriptionId = $subscriptionId
+        ResourceGroupName = $resourceGroupName
         Name = $Resource['name']
         Type = $Resource['type']
         Kind = $Resource['kind']
@@ -127,6 +127,150 @@ function ConvertTo-OpsInventoryRow {
         HttpsOnly = $properties['httpsOnly']
         PublicNetworkAccess = $properties['publicNetworkAccess']
         IdentityType = $identity['type']
+    }
+}
+
+function Select-OpsInventoryResource {
+    param(
+        [AllowEmptyCollection()][object[]]$Resources = @(),
+        [string]$Keyword,
+        [string]$ResourceGroupName
+    )
+    # Filter only allowlisted metadata after all pages have been collected.
+    # User text is literal: never interpret it as a regex, wildcard or query.
+    $Resources | Where-Object {
+        (-not $ResourceGroupName -or [string]::Equals($_.ResourceGroupName, $ResourceGroupName, [StringComparison]::OrdinalIgnoreCase)) -and
+        (-not $Keyword -or
+            ([string]$_.Name).IndexOf($Keyword, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            ([string]$_.ResourceGroupName).IndexOf($Keyword, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+    } | Sort-Object ResourceId
+}
+
+function Resolve-OpsInventoryOutputPath {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not [IO.Path]::IsPathFullyQualified($Path)) { throw 'OutputPath must be an absolute path.' }
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $packageRoot = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent)).TrimEnd('\','/')
+    if ([IO.Path]::GetExtension($fullPath) -ine '.txt' -or
+        $fullPath.StartsWith($packageRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Use a new .txt file outside the repository or installed skill directory.'
+    }
+    if (Test-Path -LiteralPath $fullPath) { throw 'The inventory report already exists; it will not be overwritten.' }
+    $parent = Split-Path $fullPath -Parent
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { throw 'The output directory must already exist.' }
+    $directory = Get-Item -LiteralPath $parent -Force -ErrorAction Stop
+    while ($null -ne $directory) {
+        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Report directories must not use junctions or symbolic links.' }
+        if (Test-Path -LiteralPath (Join-Path $directory.FullName '.git')) { throw 'Inventory reports must be outside Git worktrees.' }
+        $directory = $directory.Parent
+    }
+    return $fullPath
+}
+
+function Write-OpsInventoryReport {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][System.Collections.IDictionary]$Report)
+    $fullPath = Resolve-OpsInventoryOutputPath $Path
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Report | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine)
+    # CreateNew also rejects a competing file created after the preflight check.
+    $stream = [IO.File]::Open($fullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
+}
+
+function Get-OpsInventorySummary {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Report,
+        [ValidateRange(1,1000)][int]$Limit = 20,
+        [ValidateRange(0,2147483647)][int]$Skip = 0,
+        [ValidateSet('Live','SavedReport')][string]$Source = 'Live',
+        [string]$ReportPath
+    )
+    $selected = @($Report.Resources | Select-Object -Skip $Skip -First $Limit)
+    $index = $Skip
+    $summaryRows = @(
+        foreach ($row in $selected) {
+            $index++
+            [pscustomobject][ordered]@{
+                Index=$index; ResourceId=$row.ResourceId; Name=$row.Name
+                Service=(Get-OpsServiceKind $row.Type $row.Kind); Kind=$row.Kind
+                ResourceGroupName=$row.ResourceGroupName; Location=$row.Location; State=$row.State
+            }
+        }
+    )
+    [pscustomobject][ordered]@{
+        Source=$Source; RetrievedAtUtc=$Report.RetrievedAtUtc
+        TenantId=$Report.TenantId; SubscriptionId=$Report.SubscriptionId; Service=$Report.Service
+        QueryScope=$Report.QueryScope; Filters=$Report.Filters; Complete=$Report.Complete
+        TotalCount=$Report.TotalCount; Count=$Report.Count; ReturnedCount=$summaryRows.Count
+        Offset=$Skip; DisplayTruncated=($summaryRows.Count -lt $Report.Count)
+        NextOffset=$(if ($index -lt $Report.Count) { $index } else { $null })
+        ReportPath=$ReportPath; Resources=$summaryRows
+    }
+}
+
+function Read-OpsInventoryReport {
+    param([Parameter(Mandatory)][string]$Path)
+    # Only this saved-report format is accepted. Never display an arbitrary JSON file or its parse error.
+    try { $data = Get-Content -LiteralPath $Path -Raw -Encoding utf8 -ErrorAction Stop | ConvertFrom-Json -AsHashtable -ErrorAction Stop }
+    catch { throw 'The saved inventory report could not be read as JSON.' }
+    if ($data -isnot [System.Collections.IDictionary] -or $data['SchemaVersion'] -ne 1 -or
+        $data['Complete'] -isnot [bool] -or -not $data['Complete'] -or $data['Resources'] -isnot [array] -or
+        $data['Service'] -notin @('AppService','Functions','LogicApps','All')) { throw 'Unsupported or incomplete inventory report.' }
+    foreach ($field in @('TenantId','SubscriptionId','ApplicationId')) { Assert-OpsGuid $data[$field] 'Report identifier' }
+    $timestamp = [DateTimeOffset]::MinValue
+    # Newer ConvertFrom-Json versions deserialize ISO timestamps as DateTime by default.
+    if ($data['RetrievedAtUtc'] -is [DateTime] -or $data['RetrievedAtUtc'] -is [DateTimeOffset]) {
+        $timestamp = [DateTimeOffset]$data['RetrievedAtUtc']
+    } elseif ($data['RetrievedAtUtc'] -isnot [string] -or -not [DateTimeOffset]::TryParse($data['RetrievedAtUtc'], [ref]$timestamp)) {
+        throw 'Invalid inventory retrieval timestamp.'
+    }
+    if ($data['Count'] -isnot [int] -or $data['TotalCount'] -isnot [int]) {
+        # ConvertFrom-Json may produce Int64 depending on the PowerShell version.
+        if (($data['Count'] -isnot [int] -and $data['Count'] -isnot [long]) -or
+            ($data['TotalCount'] -isnot [int] -and $data['TotalCount'] -isnot [long])) { throw 'Invalid inventory counts.' }
+    }
+    if ($data['Count'] -lt 0 -or $data['Count'] -ne $data.Resources.Count -or $data.TotalCount -lt $data['Count']) {
+        throw 'Inventory report counts do not match the saved resources.'
+    }
+    $scope = $data['QueryScope']; $filters = $data['Filters']
+    if ($scope -isnot [System.Collections.IDictionary] -or $filters -isnot [System.Collections.IDictionary] -or
+        $scope['Kind'] -notin @('Subscription','ResourceGroup') -or $scope['ResourceId'] -isnot [string]) {
+        throw 'Invalid inventory query scope.'
+    }
+    $subscriptionScope = "/subscriptions/$($data.SubscriptionId)"
+    if (($scope.Kind -eq 'Subscription' -and $scope.ResourceId -ine $subscriptionScope) -or
+        ($scope.Kind -eq 'ResourceGroup' -and ($scope.ResourceId -notmatch '^/subscriptions/[^/]+/resourceGroups/[^/?#%]+$' -or
+        -not $scope.ResourceId.StartsWith($subscriptionScope + '/resourceGroups/', [StringComparison]::OrdinalIgnoreCase)))) {
+        throw 'Inventory query scope does not match its subscription.'
+    }
+    foreach ($field in @('Keyword','ResourceGroupName')) {
+        if ($null -ne $filters[$field] -and $filters[$field] -isnot [string]) { throw 'Invalid inventory filters.' }
+    }
+    $rows = [Collections.Generic.List[object]]::new()
+    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($row in $data.Resources) {
+        if ($row -isnot [System.Collections.IDictionary]) { throw 'Invalid inventory row.' }
+        Assert-OpsResourceScope $row['ResourceId'] $data.SubscriptionId
+        # Re-project the saved row; extra fields in a modified file cannot reach output.
+        $safe = ConvertTo-OpsInventoryRow @{
+            id=$row['ResourceId']; name=$row['Name']; type=$row['Type']; kind=$row['Kind']; location=$row['Location']
+            identity=@{type=$row['IdentityType']}
+            properties=@{state=$row['State']; provisioningState=$row['ProvisioningState']; serverFarmId=$row['PlanResourceId']
+                httpsOnly=$row['HttpsOnly']; publicNetworkAccess=$row['PublicNetworkAccess']}
+        }
+        $serviceKind = Get-OpsServiceKind $safe.Type $safe.Kind
+        if ($serviceKind -eq 'Other' -or ($data.Service -ne 'All' -and $serviceKind -ne $data.Service) -or
+            ($scope.Kind -eq 'ResourceGroup' -and "$subscriptionScope/resourceGroups/$($safe.ResourceGroupName)" -ine $scope.ResourceId) -or
+            -not $ids.Add($safe.ResourceId)) { throw 'Inventory row does not match the report scope or service.' }
+        $rows.Add($safe)
+    }
+    # Header projection is as important as row projection: no arbitrary saved fields are returned.
+    return [ordered]@{
+        SchemaVersion=1; RetrievedAtUtc=$timestamp.ToUniversalTime().ToString('o')
+        TenantId=$data.TenantId; SubscriptionId=$data.SubscriptionId; ApplicationId=$data.ApplicationId
+        Service=$data.Service; Complete=$true
+        QueryScope=[ordered]@{Kind=$scope.Kind; ResourceId=$scope.ResourceId}
+        Filters=[ordered]@{Keyword=$filters['Keyword']; ResourceGroupName=$filters['ResourceGroupName']}
+        TotalCount=$data.TotalCount; Count=$data['Count']; Resources=$rows.ToArray()
     }
 }
 

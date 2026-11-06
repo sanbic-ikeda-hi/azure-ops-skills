@@ -6,6 +6,16 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $names = @('azure-appservice','azure-functions','azure-logicapps')
 $destinationFull = [IO.Path]::GetFullPath($Destination)
+$workflowSource = Join-Path $repoRoot 'docs\change-workflow.md'
+if (-not (Test-Path -LiteralPath $workflowSource -PathType Leaf)) { throw '共通の変更手順がありません。' }
+$authenticationSource = Join-Path $repoRoot 'docs\authentication.md'
+if (-not (Test-Path -LiteralPath $authenticationSource -PathType Leaf)) { throw '共通の認証手順がありません。' }
+$operationsSource = Join-Path $repoRoot 'docs\service-operations.md'
+if (-not (Test-Path -LiteralPath $operationsSource -PathType Leaf)) { throw 'Service operation reference is missing.' }
+$helpers = @('Common.ps1','Authentication.ps1','Get-ServiceInventory.ps1','Get-InventoryReport.ps1','Get-AppServiceQuota.ps1','ServiceOperations.ps1','Get-ServiceDetails.ps1','Invoke-ServiceOperation.ps1')
+foreach ($file in $helpers) {
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "scripts\$file") -PathType Leaf)) { throw "ヘルパーがありません: $file" }
+}
 foreach ($name in $names) {
     $source = Join-Path $repoRoot "skills\$name"
     $target = Join-Path $destinationFull $name
@@ -16,12 +26,17 @@ foreach ($name in $names) {
 }
 foreach ($name in $names) {
     $target = Join-Path $destinationFull $name
-    if ($PSCmdlet.ShouldProcess($target, '検証済みスキルと読み取り専用ヘルパーを配置')) {
+    if ($PSCmdlet.ShouldProcess($target, '検証済みスキルと共通ヘルパーを配置')) {
         New-Item -ItemType Directory -Path $target -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $repoRoot "skills\$name\SKILL.md") -Destination $target
+        $referenceDirectory = Join-Path $target 'references'
+        New-Item -ItemType Directory -Path $referenceDirectory | Out-Null
+        Copy-Item -LiteralPath $workflowSource -Destination $referenceDirectory
+        Copy-Item -LiteralPath $authenticationSource -Destination $referenceDirectory
+        Copy-Item -LiteralPath $operationsSource -Destination $referenceDirectory
         $scriptDirectory = Join-Path $target 'scripts'
         New-Item -ItemType Directory -Path $scriptDirectory | Out-Null
-        foreach ($file in @('Common.ps1','Get-ServiceInventory.ps1')) {
+        foreach ($file in $helpers) {
             Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\$file") -Destination $scriptDirectory
         }
     }
