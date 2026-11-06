@@ -1,0 +1,10 @@
+{
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "subscriptionIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "sandboxSubscriptionId": "00000000-0000-0000-0000-000000000000",
+  "applicationId": "00000000-0000-0000-0000-000000000000",
+  "servicePrincipalObjectId": "00000000-0000-0000-0000-000000000000",
+  "certificateThumbprint": "<LOCAL_CERTIFICATE_THUMBPRINT>"
+}

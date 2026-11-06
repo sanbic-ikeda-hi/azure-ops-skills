@@ -1,0 +1,28 @@
+{
+  "Name": "Azure Ops Services Reader",
+  "IsCustom": true,
+  "Description": "Read selected management metadata for App Service, Functions and Logic Apps. No keys, payloads, changes or RBAC administration.",
+  "Permissions": [
+    {
+      "Actions": [
+        "Microsoft.Resources/subscriptions/read",
+        "Microsoft.Resources/subscriptions/resourceGroups/read",
+        "Microsoft.Web/sites/read",
+        "Microsoft.Web/sites/config/read",
+        "Microsoft.Web/sites/slots/read",
+        "Microsoft.Web/sites/slots/config/read",
+        "Microsoft.Web/sites/functions/read",
+        "Microsoft.Web/sites/workflows/read",
+        "Microsoft.Web/serverfarms/read",
+        "Microsoft.Web/connections/read",
+        "Microsoft.Logic/workflows/read"
+      ],
+      "NotActions": [],
+      "DataActions": [],
+      "NotDataActions": []
+    }
+  ],
+  "AssignableScopes": [
+    "/subscriptions/<SUBSCRIPTION_ID>"
+  ]
+}

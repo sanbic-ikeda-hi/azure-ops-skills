@@ -1,0 +1,28 @@
+# Authentication, machine state, and Azure responses never belong in Git.
+.local/
+.azure/
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.psd1
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+*.log
+*.trace
+*context*.json
+*token*.json
+artifacts/
+evidence/
+output/
+coverage/
+
+# Actual local profiles / registration state (also excluded if copied here accidentally)
+connection.json
+provision-state.json
+computer-registration-state.json
+module-versions.json
