@@ -153,6 +153,18 @@ function Test-OperationScenario {
         Verify ($saved.Succeeded -ne $expectedFailure) "Saved result is truthful: $Scenario"
         $expectedWrites=if($Scenario -in @('ChangedBefore','ChangedImmediately','WrongContext','Expired','WrongPlanTarget','ExtraBefore','DifferentValue','NoOp')){0}else{1}
         Verify ($calls.write -eq $expectedWrites) "Single write or rejection without retry: $Scenario"
+        if(-not $expectedFailure){
+            $verifyFile=Join-Path $directory ($Scenario+'-verify.txt')
+            $writesBefore=$calls.write
+            $vp=$parameters.Clone();$vp.Remove('Execute');$vp.Verify=$true;$vp.OutputPath=$verifyFile
+            & $scriptFile @vp | Out-Null
+            $verified=Microsoft.PowerShell.Management\Get-Content -LiteralPath $verifyFile -Raw|ConvertFrom-Json -AsHashtable
+            Verify ($verified.Succeeded -and -not $verified.MutationSubmitted -and $calls.write -eq $writesBefore) "Verify sends no mutation: $Scenario"
+            $site.properties.httpsOnly=-not $site.properties.httpsOnly
+            $vp.OutputPath=Join-Path $directory ($Scenario+'-verify-drift.txt');$driftFailed=$false
+            try{& $scriptFile @vp|Out-Null}catch{$driftFailed=$true}
+            Verify ($driftFailed -and $calls.write -eq $writesBefore) "Verify retains original baseline: $Scenario"
+        }
         if($Scenario -in @('WriteDenied','WriteThrown403')){
             Verify ($saved.HttpStatus -eq 403 -and $saved.FailureDetails.HttpStatus -eq 403) 'Returned and thrown write failures retain status in the saved operation result'
             Verify ($saved.FailureDetails.CategoryHint -eq $(if($Scenario -eq 'WriteThrown403'){'Authorization'}else{'Unknown'})) 'Failure category requires structured evidence'

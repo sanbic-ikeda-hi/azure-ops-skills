@@ -5,6 +5,16 @@ description: Azure App Serviceの現在の構成・状態の取得、既存Web A
 
 # App Service の運用
 
+## 起動待ち・比較の必須手順
+
+- 配布完了、要求受付、管理状態Running、アプリ準備完了、本人認証、業務成功を別々に記録する。Runningや未認証401・ログイン302をバックエンド準備完了と判定しない。
+- 配布・再起動・プラン移動・認証変更後は、案件で承認された副作用のないヘルスGETを `scripts/Wait-AppServiceReady.ps1` で確認する。ソースではリポジトリ直下のscripts、配布先ではSKILL.mdの隣のscriptsを使う。全体期限・要求期限・連続成功条件を明示する。
+- 書込みの自動再送は禁止する。準備完了の上限付きGETポーリングとは区別する。DNS/TLS・認証・IP制限等は起動中として待ち続けない。
+- 比較は `scripts/ConfigurationComparison.ps1` の共通処理を使い、案件ごとに大小文字・配列順・JSON文字列の独自比較を作らない。ARM IDは形式検証後に正規化し、principalId/clientIdは別に照合する。appRolesは `Get-OpsAppRoleComparison` でID単位に比較し、値・有効状態・欠落・追加・重複を検出する。
+- 設定は `Get-OpsPropertyReview` で書込み対象・観測専用項目・未知項目を区分する。未知項目は安全な項目名を記録して変更前に停止。サービス補完情報は無条件に許容せずInspectで確認する。
+- 検証失敗は変更要求を再送せずInspect/Verifyへ進む。共通定型操作は元の計画を指定した `Invoke-ServiceOperation.ps1 -Verify -ReviewedPlanPath ...` がGETだけで再確認する。新しいスナップショット同士の一致を元の変更前状態維持の証明にしない。
+- 詳細・停止条件・実Azure検証の限界は `docs/appservice-operations.md`（配布先は `references/appservice-operations.md`）を参照する。
+
 ## 認証と対象
 
 開始時にヘルパーのGet-UserSettings.ps1で保存情報と不足項目を確認する。必要な不足分だけチャットで質問し、接続ファイルや生成済みIDで分かる項目は聞き直さない。保存の形式・タイミングは共通認証手順の「ユーザー固有情報の確認と保存」に従う。

@@ -12,10 +12,10 @@ $authenticationSource = Join-Path $repoRoot 'docs\authentication.md'
 if (-not (Test-Path -LiteralPath $authenticationSource -PathType Leaf)) { throw '共通の認証手順がありません。' }
 $operationsSource = Join-Path $repoRoot 'docs\service-operations.md'
 if (-not (Test-Path -LiteralPath $operationsSource -PathType Leaf)) { throw 'Service operation reference is missing.' }
-$appServiceHelpers = @('AppServiceDiagnostics.ps1','Get-AppServiceDiagnostics.ps1')
+$appServiceHelpers = @('AppServiceDiagnostics.ps1','Get-AppServiceDiagnostics.ps1','AppServiceReadiness.ps1','Wait-AppServiceReady.ps1')
 $appServiceReference = Join-Path $repoRoot 'docs/appservice-operations.md'
 if (-not (Test-Path -LiteralPath $appServiceReference -PathType Leaf)) { throw 'App Service operation reference is missing.' }
-$helpers = @('Common.ps1','Authentication.ps1','UserSettings.ps1','Get-UserSettings.ps1','Set-UserSettings.ps1','Get-ServiceInventory.ps1','Get-InventoryReport.ps1','Get-AppServiceQuota.ps1','ServiceOperations.ps1','Get-ServiceDetails.ps1','Invoke-ServiceOperation.ps1')
+$helpers = @('Common.ps1','Authentication.ps1','UserSettings.ps1','Get-UserSettings.ps1','Set-UserSettings.ps1','Get-ServiceInventory.ps1','Get-InventoryReport.ps1','Get-AppServiceQuota.ps1','ConfigurationComparison.ps1','ServiceOperations.ps1','Get-ServiceDetails.ps1','Invoke-ServiceOperation.ps1')
 foreach ($file in ($helpers + $appServiceHelpers)) {
     if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "scripts\$file") -PathType Leaf)) { throw "ヘルパーがありません: $file" }
 }

@@ -1,5 +1,35 @@
 # App Serviceの認証・SCM診断と配布確認
 
+## 準備完了の読み取り確認
+
+`Wait-AppServiceReady.ps1 -SubscriptionId <ID> -ResourceId <WEB_APP_ID> -HealthPath /healthz -ExpectedJsonStatus ok -OutputPath <NEW_ABSOLUTE_PATH.txt>` を使う。本人認証やPDF生成は含めない。CLIは管理メタデータから正確なメインホストを取得し、専用証明書接続・Running・enabledを確認した後に待機する。Azureの起動・設定変更は行わない。メインへトークン・Cookieは送らず、リダイレクトしない。
+
+暫定値はOverallSeconds=300、RequestSeconds=10、IntervalSeconds=5（要求完了後）、ConsecutiveSuccesses=2。期待ステータスは200〜299の明示値（既定200）。期待する小さなJSONのstatus値を必要に応じて指定する。本文は4096バイトまで、値はログに残さない。ヘルスGETの副作用がないことは案件で確認する。
+
+全体期限はHTTP待機開始からの単調時計で測る。管理API・接続の事前確認時間とは別。変更要求の受付からHTTP待機開始までの空白を案件で記録し、タイムアウト後の再確認は新しい観測区間として扱う。各要求と本文読取り、待機を残り時間へ制限し、CancellationTokenを要求・本文・待機へ適用する。期限後に応答が届いても成功にしない。キャンセル時は通信を破棄する。OSのDNS等の終了遅延は実行環境でも検証し、設定値だけで厳密なプロセス終了を保証したと説明しない。
+
+502/503/504と要求タイムアウトのみ期限内で継続する。一時応答候補であり起動中の証明ではない。401/403/302/404・本文不一致はUnexpectedResponse、DNS/TLS等の通信失敗はTransportFailureとして停止する。全体期限はDeadlineExpired、取消はCanceled。連続成功以外は成功数をリセットする。ReadyObservedは本人ログイン・業務成功・プロセス再起動・全インスタンスの正常性を証明しない。
+
+プラットフォームのウォームアップとHealth Checkは外部GET待機とは別。Linuxコード配布にもWEBSITES_CONTAINER_START_TIME_LIMITが適用される。診断のために起動制限・ヘルス設定を変更しない。公式: [設定一覧](https://learn.microsoft.com/azure/app-service/reference-app-settings#app-environment)、[Health Check](https://learn.microsoft.com/azure/app-service/monitor-instances-health-check)、[HttpClientの期限](https://learn.microsoft.com/dotnet/api/system.net.http.httpclient.timeout)。
+
+## 共通比較と検証失敗後の確認
+
+ConfigurationComparison.ps1は外部通信しない。Get-OpsConfigurationDifferenceは差分パスだけを返し、値・動的なURLキーを出さない。ResourceId/PermissionScope/serverFarmIdとuserAssignedIdentitiesのARMキーのみ形式検証して大小文字を正規化する。通常の文字列や配列は順序・型・null/空/欠落を保持する。参照先のprincipalId/clientIdの違いは拒否する。
+
+Get-OpsAppRoleComparisonはGUIDによる対応付け、全書込みフィールド、メンバー種別を比較する。順序だけは無視し、追加・欠落・重複・無効化を検出する。originは比較用の書込み射影に含めない。未知項目は拒否する。Get-OpsPropertyReviewは既知の書込み項目と観測専用項目を明示して未知項目名を返す。Known=falseのまま更新しない。Graphへの接続・更新・権限付与は実装せず、案件の承認された実行主体を維持する。
+
+redirectUriSettings等の自動補完を単に除外して成功にしない。元の基準、期待変更、現在観測を分けてInspectし、補完項目の意味・書込み可否を確認する。公式資料に差があれば未知項目を通さず根拠を調査する。[appRole](https://learn.microsoft.com/graph/api/resources/approle)、[REST webApplication](https://learn.microsoft.com/graph/api/resources/webapplication)、[Bicep applications](https://learn.microsoft.com/graph/templates/bicep/reference/applications)。
+
+共通定型操作はExecuteと排他的な-Verifyを使える。同じSubscriptionId/ResourceId/Operation/Valueと元のReviewedPlanPath、新規OutputPathを指定する。計画期限切れでもGETによる確認だけはできる。元のBeforeから意図した変更だけを適用して比較し、書込みやローカル対象ファイル更新を行わない。失敗時はDifferentPropertiesを記録する。手動で計画を書き換えて不一致を消さない。
+
+## 起動診断の証拠と権限
+
+要求送信・受付、管理状態、配布状態、プラットフォーム起動/停止、Java待受/終了、ヘルス開始/終了をUTCとインスタンス識別情報で対応付ける。ファイル数・時刻の範囲・抽出行数・欠落区間・未取得を記録する。OOM等の検出なしは十分なログや障害なしの証明ではない。Activity Logだけで全再起動やアプリ内部を把握しない。LinuxのSCMプロセス情報を本体Javaの情報にしない。usagesの0/-1、空メトリック、取得失敗を余裕や無制限の根拠にしない。
+
+既存権限で取得不可なら停止して、対象・UTC範囲・リポジトリ外の新規保存先を固定したユーザー用PowerShell 7コマンドを案件で準備する。既存Azと共通接続を優先し、自動昇格・別主体切替・モジュール追加はしない。Kudu Diagnostic dumpは既存ログ取得の候補。publish/actionは読取り専用権限ではない。生ログZIPはユーザー管理のローカルに保管し、チャットやGitに出さない。ログ有効化・診断設定は費用・秘密情報・再起動を伴い得る別変更として判断する。[ログ取得](https://learn.microsoft.com/azure/app-service/troubleshoot-diagnostic-logs#access-log-files)、[Kudu権限](https://learn.microsoft.com/azure/app-service/resources-kudu#rbac-permissions-required-to-access-kudu)。
+
+テストは合成時系列・ローカルHTTPと実Azureを区別する。実Azureでは承認された操作機会に、書込み1回、段階別時刻、連続期待応答、制限維持、キャンセルと期限を確認し、本人ログインと架空業務要求を別検証する。原因確認だけの再起動を繰り返さない。
+
 共通認証はauthentication.md、変更・権限・停止境界はchange-workflow.mdに従う。
 この文書はApp Service Web App向け。Functions、スロット、別クラウドで同じ動作を保証しない。
 

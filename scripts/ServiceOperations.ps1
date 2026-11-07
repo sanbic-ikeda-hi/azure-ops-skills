@@ -1,6 +1,7 @@
 #requires -Version 7.2
 # Shared, allowlisted management metadata and operations. No sign-in on import.
 . (Join-Path $PSScriptRoot 'Common.ps1')
+. (Join-Path $PSScriptRoot 'ConfigurationComparison.ps1')
 
 function Assert-OpsServiceId {
     param([string]$Id, [hashtable]$Config)
@@ -100,7 +101,7 @@ function Get-OpsServiceSnapshot {
         $snapshot[$field]=Get-OpsScalar $p $field
     }
     # Hashes are comparison evidence only. Raw identities/configuration never enter reports.
-    $snapshot['IdentityFingerprint']=Get-OpsFingerprint $Item['identity']
+    $snapshot['IdentityFingerprint']=Get-OpsFingerprint (ConvertTo-OpsComparable $Item['identity'])
     $f=$p['functionAppConfig']
     if ($null -ne $f) {
         if ($f -isnot [Collections.IDictionary] -or $f['scaleAndConcurrency'] -isnot [Collections.IDictionary]) {throw 'Invalid Function App configuration.'}
@@ -226,7 +227,10 @@ function Get-OpsOperationSpec {
 function New-OpsOperationPlan {
     param([hashtable]$Config,$Item,[string]$Operation,[string]$Value)
     $spec=Get-OpsOperationSpec $Item $Operation $Value
-    return [ordered]@{Schema='AzureOpsOperationPlan/1';RetrievedAtUtc=[DateTime]::UtcNow.ToString('o');Source='Live';TenantId=$Config.tenantId;SubscriptionId=$Config.subscriptionId;ApplicationId=$Config.applicationId;ResourceId=$Item['id'];Operation=$Operation;Value=$Value;RequiredAction=$spec.Permission;PermissionScope=$Item['id'];Before=$spec.Before;Change=@{Field=$spec.Field;Before=$spec.Before[$spec.Field];After=$spec.Desired};Verification='ARM management state only; not application or trigger health'}
+    $expected=$spec.Before|ConvertTo-Json -Depth 25|ConvertFrom-Json -AsHashtable
+    $expected[$spec.Field]=$spec.Desired
+    if($spec.Field -eq 'maximumInstanceCount'){$expected.FunctionConfigurationFingerprint=Get-OpsFingerprint $spec.Body.properties.functionAppConfig}
+    return [ordered]@{Schema='AzureOpsOperationPlan/1';RetrievedAtUtc=[DateTime]::UtcNow.ToString('o');Source='Live';TenantId=$Config.tenantId;SubscriptionId=$Config.subscriptionId;ApplicationId=$Config.applicationId;ResourceId=$Item['id'];Operation=$Operation;Value=$Value;RequiredAction=$spec.Permission;PermissionScope=$Item['id'];Before=$spec.Before;ExpectedAfter=$expected;Change=@{Field=$spec.Field;Before=$spec.Before[$spec.Field];After=$spec.Desired};Verification='ARM management state only; not application or trigger health'}
 }
 
 function Assert-OpsReviewedPlan {
@@ -239,8 +243,8 @@ function Assert-OpsReviewedPlan {
     if ($Reviewed['RetrievedAtUtc'] -is [DateTime] -or $Reviewed['RetrievedAtUtc'] -is [DateTimeOffset]) {$stamp=[DateTimeOffset]$Reviewed['RetrievedAtUtc']}
     else {$validStamp=[DateTimeOffset]::TryParse([string]$Reviewed['RetrievedAtUtc'],[ref]$stamp)}
     if (-not $validStamp -or $stamp -gt [DateTimeOffset]::UtcNow.AddMinutes(1) -or $stamp -lt [DateTimeOffset]::UtcNow.AddHours(-1)) {throw 'Plan is expired or has an invalid timestamp. Replan and review.'}
-    foreach ($key in @('Schema','Source','TenantId','SubscriptionId','ApplicationId','ResourceId','Operation','Value','RequiredAction','PermissionScope','Before','Change')) {
-        if ((Get-OpsFingerprint $Reviewed[$key]) -cne (Get-OpsFingerprint $Current[$key])) {throw 'Reviewed plan differs from the requested operation or current state. Replan and review.'}
+    foreach ($key in @('Schema','Source','TenantId','SubscriptionId','ApplicationId','ResourceId','Operation','Value','RequiredAction','PermissionScope','Before','ExpectedAfter','Change')) {
+        if (@(Get-OpsConfigurationDifference @{$key=$Reviewed[$key]} @{$key=$Current[$key]}).Count) {throw "Reviewed plan differs at $key. Replan and review. Values omitted."}
     }
 }
 
@@ -253,5 +257,10 @@ function Assert-OpsOperationResult {
     $expected.Remove('provisioningState')
     $actual=$After | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable
     $actual.Remove('provisioningState')
-    if ((Get-OpsFingerprint $expected) -cne (Get-OpsFingerprint $actual)) {throw 'Post-change state differs from the reviewed result. No automatic rollback.'}
+    $differences=@(Get-OpsConfigurationDifference $expected $actual)
+    if ($differences.Count) {
+        $failure=[InvalidOperationException]::new('Post-change state differs. Inspect/Verify without resubmitting the change.')
+        $failure.Data['DifferentProperties']=$differences
+        throw $failure
+    }
 }

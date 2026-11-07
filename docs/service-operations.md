@@ -1,5 +1,7 @@
 # 詳細取得と定型変更（第2段階）
 
+検証失敗後は変更を再送せず、同じ対象・操作・値・元のReviewedPlanPathで `Invoke-ServiceOperation.ps1 -Verify` を使う。新規OutputPathを指定し、Executeとは併用しない。新しい計画のExpectedAfterを使ったGET限定照合で、期限切れ計画も読取りには使える。旧形式でExpectedAfterのない計画は手動Inspectへ進み、再送しない。変更実行では新形式の計画を作り直してレビューする。要求試行・受付・管理観測はEventsのUTC時刻、設定不一致はDifferentPropertiesを確認する。Verifyはアプリ正常性・本人ログイン・実プロセス再起動を保証しない。
+
 認証・Windows実行ユーザーは `authentication.md`、対象選択・承認・権限管理は `change-workflow.md` に従う。通常の操作は専用アプリの証明書認証を使う。ユーザー認証への自動切替はない。
 
 ## 必要な項目だけ取得する

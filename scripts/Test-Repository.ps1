@@ -339,7 +339,7 @@ foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
     }
     $previewRoot = Join-Path $root ('.local/offline-layout-' + [guid]::NewGuid().ToString('N'))
     & (Join-Path $PSScriptRoot 'Install-Skills.ps1') -Destination $previewRoot
-    Check ($copies.Count -eq 48) 'Base package remains fifteen files per skill; App Service adds two helpers and one reference'
+    Check ($copies.Count -eq 53) 'Base package has sixteen files per skill; App Service adds four helpers and one reference'
     foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
         $expected = @{
             'SKILL.md'="skills/$name/SKILL.md"
@@ -352,6 +352,7 @@ foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
             'scripts/Get-InventoryReport.ps1'='scripts/Get-InventoryReport.ps1'
             'scripts/Get-AppServiceQuota.ps1'='scripts/Get-AppServiceQuota.ps1'
             'scripts/ServiceOperations.ps1'='scripts/ServiceOperations.ps1'
+            'scripts/ConfigurationComparison.ps1'='scripts/ConfigurationComparison.ps1'
             'scripts/Get-ServiceDetails.ps1'='scripts/Get-ServiceDetails.ps1'
             'scripts/Invoke-ServiceOperation.ps1'='scripts/Invoke-ServiceOperation.ps1'
             'references/change-workflow.md'='docs/change-workflow.md'
@@ -361,6 +362,8 @@ foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
         if ($name -eq 'azure-appservice') {
             $expected['scripts/AppServiceDiagnostics.ps1']='scripts/AppServiceDiagnostics.ps1'
             $expected['scripts/Get-AppServiceDiagnostics.ps1']='scripts/Get-AppServiceDiagnostics.ps1'
+            $expected['scripts/AppServiceReadiness.ps1']='scripts/AppServiceReadiness.ps1'
+            $expected['scripts/Wait-AppServiceReady.ps1']='scripts/Wait-AppServiceReady.ps1'
             $expected['references/appservice-operations.md']='docs/appservice-operations.md'
         }
         $skillTarget=[IO.Path]::GetFullPath((Join-Path $previewRoot $name)).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
@@ -398,6 +401,8 @@ foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
 & (Join-Path $PSScriptRoot 'Test-InventoryReportFile.ps1')
 & (Join-Path $PSScriptRoot 'Test-ServiceOperations.ps1')
 & (Join-Path $PSScriptRoot 'Test-AppServiceDiagnostics.ps1')
+& (Join-Path $PSScriptRoot 'Test-AppServiceReadiness.ps1')
+& (Join-Path $PSScriptRoot 'Test-ConfigurationComparison.ps1')
 & (Join-Path $PSScriptRoot 'Test-UserSettings.ps1')
 & (Join-Path $PSScriptRoot 'Test-SandboxAppService.ps1')
 & (Join-Path $PSScriptRoot 'Test-ArmErrorSummary.ps1')
