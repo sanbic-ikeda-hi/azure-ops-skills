@@ -1,6 +1,21 @@
 # Sandboxでのスキル試験
 
+## ユーザー設定機能のこのPCへの反映（2026-11-07）
+
+- ユーザーの明示的な反映依頼に基づき、配置済み3スキルの相違9ファイル・不足9ファイルを確認。LocalAppDataのAzureOpsSkills配下で新しい45ファイルを準備・照合し、旧版36ファイルをスキル読込先の外へ退避して切り替えた。退避ファイルと新配置ファイルのハッシュ照合に成功した。
+- 既存のconnection.jsonからtenantId・sandboxSubscriptionId・productionSubscriptionId・applicationIdだけをuser-settings.jsonへ登録。各配置済みGet-UserSettings.ps1で接続設定の存在と不足0件を確認した。対象リソース・Sandbox試験条件は登録していない。
+- 接続設定・進行状況・モジュール記録は更新前後のハッシュが一致。証明書操作・Azure接続・権限変更・Gitのコミットやプッシュは行っていない。復元情報と検証結果はリポジトリ外のdeployment-manifest.jsonへ記録し、実IDや個人パスを文書へ転記していない。
+- スクリプトは変更しておらず、直前の全オフライン検証2030件・3スキルの形式検証結果を再利用した。今回は実配置・ハッシュ・配置先からのローカル設定取得を確認し、Azureの実取得や操作を検証した結果とは区別する。
+
 この試験はリポジトリ版のサービス別スキルとヘルパーを使う。配布済みコピーの更新は別途ユーザーが行う。
+
+## 現行ヘルパーの入力
+
+試験用の固定名・既定リージョンは補完しない。実行前にGet-UserSettings.ps1の-SandboxNameで不足条件を確認し、明示引数か登録済み条件を使う。保存は登録を指示された場合だけ行う。構造は[ユーザー固有情報](authentication.md#ユーザー固有情報の確認と保存)を参照。以下の過去の試験名・所在地・費用は記録時点の例であり、現在の対象や実行承認ではない。
+
+LogicAppsはresourceGroupName・workflowName・location、Functions作成はresourceGroupName・functionAppName・planName・storageAccountName・locationが必要。未登録なら実行せず不足を表示する。LogicAppsのRevokeではResourceGroupName・WorkflowName・今回のAssignmentIdを必ず明示する。
+
+Web Appの操作試験はExpectedLocation・ExpectedOperatingSystem・ExpectedSkuを明示するか、sandbox.WebAppTestへ登録する。所在地・Windows/Linux・B1/P0v4をGETと照合し、1台・Running・セッション固定false・公開アクセス無効など従来の保護条件も維持する。Functions操作試験のLocationも明示またはsandbox.FunctionsTestへ登録する。完全ID・割当ID・新規レポート先の必須指定は従来どおり。
 初回作成・権限付与・解除はユーザーが実行し、専用アプリによる読み取り・承認済み変更は [共通手順](change-workflow.md) の正規の承認付き実行を使う。
 
 ## 作成するものと影響
@@ -8,9 +23,9 @@
 | 項目 | 内容 |
 | --- | --- |
 | サブスクリプション | PC側の接続設定にあるsandboxSubscriptionIdのみ |
-| 新規RG | rg-azureops-sandbox-test |
-| Logic App | la-azureops-sandbox-test（Consumption） |
-| リージョン | Japan East |
+| 新規RG | 確認したResourceGroupName |
+| Logic App | 確認したWorkflowName（Consumption） |
+| リージョン | 確認したLocation |
 | 初期状態 | Disabled |
 | 定義 | HTTP Requestトリガーと、固定文字列を出すComposeのみ |
 | 関連リソース | App Serviceプラン、Storage、API接続、マネージドIDを作成しない |
@@ -95,7 +110,7 @@ Grantで権限を受け取るのは、接続設定のapplicationIdに対応す�
 
 実際のロール割当Scopeはワークフローの完全なID。AssignableScopesは試験RGで、ロールを割当可能にする範囲を表す。RGへのアクセス付与ではない。この追加ロールには定義変更・実行開始・秘密取得・削除・RBAC管理を含めない。他ロールによる権限は合算されるため、スクリプトが表示する既存・継承割当の情報も確認する。追加ロールだけで専用アプリの全有効権限を保証しない。
 
-ユーザー実行用の `scripts/Set-SandboxLogicAppAccess.ps1` は、引数なしなら接続せず計画を表示する。初回作成スクリプトの既定名の試験リソースだけを対象とする。別名で作った場合は、そのまま実行せず対象に合わせた案を準備する。
+ユーザー実行用の `scripts/Set-SandboxLogicAppAccess.ps1` は、登録済みの名前があれば引数なしで接続せず計画を表示する。未登録なら名前の明示が必要。今回作成した完全IDと計画を照合してから実行する。
 
 ~~~powershell
 pwsh -NoProfile -File .\scripts\Set-SandboxLogicAppAccess.ps1
@@ -108,7 +123,7 @@ Grantはユーザーがロール定義・割当を管理できるアカウント
 付与後に専用アプリで状態変更試験を行い、Disabledに戻ったことを確認してから、ユーザーが出力されたAssignmentIdを指定して解除する。
 
 ~~~powershell
-pwsh -NoProfile -File .\scripts\Set-SandboxLogicAppAccess.ps1 -Action Revoke -AssignmentId '<Grantが出力したAssignmentId>'
+pwsh -NoProfile -File .\scripts\Set-SandboxLogicAppAccess.ps1 -Action Revoke -ResourceGroupName '<確認したRG名>' -WorkflowName '<確認したワークフロー名>' -AssignmentId '<Grantが出力したAssignmentId>'
 ~~~
 
 Revokeはその割当ID・ObjectId・RoleId・Scopeを照合した1件だけを解除し、再取得で不存在を確認する。常設の読み取り割当とロール定義は残す。割当の不存在と実効権限への反映は別で、Azure側の反映待ちがあり得る。
@@ -166,20 +181,27 @@ Az.Resources 10.2.2環境のGet-AzRoleDefinition／New-AzRoleDefinitionで、PSR
 ### 費用と後片付け
 
 同日取得した[Azure公式料金API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices)では、Southeast Asia / Azure App Service Premium v4 Plan - Linux / P0v4 / Consumption / JPYの参考価格は15.016円/時。2時間で約30円、24時間で約360円のプラン料金の目安。Japan Eastの同SKUは16.7724円/時だった。円価格は見積用で、契約・為替・税等による実請求との差がある。契約上の上限や自動停止を設定したものではない。
-最初はB1を計画したが、ユーザーの追加指示により本番と同じLinux Premium v4の最小SKUを試験する。既定値はP0v4。互換性のため-Sku B1も指定できるが、エラー時に自動でSKUを切り替えない。Japan EastのP0v4も実試験でクォータ上限0により失敗したため、海外候補のユーザー提供結果に基づきSoutheast Asiaを第一候補とする。価格掲載や正のクォータは、実際の作成成功・物理容量を保証しない。
+当時はB1を計画した後、ユーザーの追加指示でLinux Premium v4の最小SKUへ変更し、旧版の既定値をP0v4とした。現行版ではSkuも明示または登録する。エラー時の自動SKU切替はしない。Japan EastのP0v4も実試験でクォータ上限0により失敗したため、当時の海外候補のユーザー提供結果に基づきSoutheast Asiaを第一候補とした。価格掲載や正のクォータは、現在の作成成功・物理容量を保証しない。
 試験は作成から数時間以内に終了し、不要になったWeb Appとプランをその場で削除する。アプリ停止・アプリだけの削除ではプランの課金は止まらない。[公式の課金説明](https://learn.microsoft.com/azure/app-service/overview-manage-costs#understand-the-full-billing-model)。
 
 ### ユーザーによる準備
 
-`Set-SandboxAppServiceFixture.ps1` はこの試験だけのユーザー実行用スクリプトで、配布するスキルに同梱しない。引数なしはローカルの計画表示のみ。-Locationはjapaneast（互換性のため既定値）、southeastasia、westus2、centralusに対応。Japan East以外ではRG・プラン・アプリ名にリージョン名を付け、既存の日本側試験と分ける。作成・追加・後片付けのすべてで同じ-Locationと-Skuを指定する。
+`Set-SandboxAppServiceFixture.ps1` はユーザー実行用で配布スキルに同梱しない。ResourceGroupName・PlanName・AppName・Location・Skuを指定するか、sandbox.AppServiceFixtureへ登録する。既定は計画のみ。地域別の名前もユーザーが選び、暗黙の接尾辞や既定SKUは使わない。作成・追加・後片付けで同じ対象を使う。Removeは全条件を明示し、登録済み設定から補完しない。
 
 ~~~powershell
-pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Location southeastasia -Sku P0v4
+$fixture = @{
+    ResourceGroupName = Read-Host '確認した試験用RG名'
+    PlanName = Read-Host '確認した試験用プラン名'
+    AppName = Read-Host '確認した試験用Web App名'
+    Location = Read-Host '確認した所在地'
+    Sku = Read-Host '確認したSKU（B1/P0v4）'
+}
+pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 @fixture
 # 先に試験用プランを1つ用意する。新規RG限定。同名RGがあれば停止。
-pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action CreatePlan -Location southeastasia -Sku P0v4
+pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action CreatePlan @fixture
 # 作成が成功してから、既存プランへWeb Appだけを追加する。
 if ($LASTEXITCODE -eq 0) {
-    pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action AddApp -Location southeastasia -Sku P0v4
+    pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action AddApp @fixture
 }
 ~~~
 
@@ -199,9 +221,9 @@ Southeast AsiaのLinux P0v4の公式参考価格を確認し、Fixtureを明示�
 ユーザーがAzure PortalのQuotas → App Service (Public Preview)でSandbox・Japan East・P0v4 VMsを選び、新しい上限を1として申請する。SKUとTotal Regional VMsの両方に枠が必要だが、Total Regional VMsへの直接申請ではなく個別SKUの増枠を申請する。地域合計が0/0で個別SKUが表示されない場合は、今回の失敗結果を添えてサポートへ申請する。承認だけでなく画面上の上限反映も確認する。専用アプリへのRBAC付与とは別の設定であり、Codexは申請・権限変更を代行しない。
 
 ~~~powershell
-pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action ResumePlan -Sku P0v4
+pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action ResumePlan @fixture
 if ($LASTEXITCODE -eq 0) {
-    pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action AddApp -Sku P0v4
+    pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action AddApp @fixture
 }
 ~~~
 
@@ -252,10 +274,10 @@ Get-AzResourceProvider -ListAvailable -ErrorAction Stop |
 6. ユーザーが今回追加した割当を解除したら、次のRemoveをユーザーが実行する。途中で試験を中止した場合も作成済みのプランを残さないよう確認する。
 
 ~~~powershell
-pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action Remove -Location southeastasia -Sku P0v4
+pwsh -NoProfile -File .\scripts\Set-SandboxAppServiceFixture.ps1 -Action Remove @fixture
 ~~~
 
-Removeは指定リージョンの試験用Web Appと試験用プランだけを削除する。削除前にID・試験タグ・RGと各リソースのリージョン・指定SKU/1台・他リソースの有無・プランのアプリ数を確認する。アプリ削除時のプラン自動削除を明示的に無効化し、アプリの不存在とプランが空であることを確認してからプランを削除する。試験タグやリージョンが異なる、他リソースや共有アプリがある、ロック・権限エラー等の場合は停止する。自動ロック解除・強制削除・書き込み再試行は行わない。既定値はP0v4なので、明示的にB1を作成した場合はRemoveにも-Sku B1を付ける。
+Removeは明示した試験用Web Appと試験用プランだけを削除する。削除前にID・試験タグ・RGと各リソースのリージョン・指定SKU/1台・他リソースの有無・プランのアプリ数を確認する。アプリ削除時のプラン自動削除を明示的に無効化し、アプリの不存在とプランが空であることを確認してからプランを削除する。試験タグやリージョンが異なる、他リソースや共有アプリがある、ロック・権限エラー等の場合は停止する。自動ロック解除・強制削除・書き込み再試行は行わない。名前・所在地・SKUは作成時と同じ値をすべて明示し、保存値から補完しない。
 空のRGとカスタムロール定義は残す。アプリやプランの削除成功だけでロール割当を明示的に解除済みとは扱わない。最終確認はAppAbsent=true、PlanAbsent=true。どちらかを確認できなければ課金停止済みと報告しない。
 
 API根拠: [プラン作成](https://learn.microsoft.com/rest/api/appservice/app-service-plans/create-or-update?view=rest-appservice-2024-11-01)、[Web App作成](https://learn.microsoft.com/rest/api/appservice/web-apps/create-or-update?view=rest-appservice-2024-11-01)、[Web App削除](https://learn.microsoft.com/rest/api/appservice/web-apps/delete?view=rest-appservice-2024-11-01)、[プラン削除](https://learn.microsoft.com/rest/api/appservice/app-service-plans/delete?view=rest-appservice-2024-11-01)。
@@ -313,7 +335,7 @@ API根拠: [プラン作成](https://learn.microsoft.com/rest/api/appservice/app
 - オフライン99項目: Windows/Linux、RG所在地がプランと違う場合、既存アプリ非上書き、OS/地域/SKU/台数不一致、途中の認証先変更、部分作成後の失敗、GET待機、プランへの非書き込みと構成比較、公開設定の照合を確認。
 - オフライン48項目: 個別Scope、プランとの関連、既存ロールの厳密照合、DataActionsや広いAssignableScopesの拒否、他サブスクリプション・スロット・Functionsの拒否、割当1件だけの解除、失敗時の非再試行を確認。
 - 実際の接続設定で両ヘルパーのPlan表示を確認。Azureへの作成・権限付与は実行していない。
-- 操作試験にはInvoke-SandboxWebAppTest.ps1を追加。既定は計画表示・保存だけで、-Executeを明示した場合だけ実操作する。対象・比較対象・プラン・ユーザー提供のAssignmentIdと新規OutputPathを必須とする。現在は今回のWindows/West US 3/P0v4/1台・Running/セッション固定false/公開無効の条件に限定し、別の構成を勝手に試さない。
+- 操作試験にはInvoke-SandboxWebAppTest.ps1を追加。当時の実試験はWindows/West US 3/P0v4だった。現行版の期待する所在地・OS・SKUは明示引数または登録条件で照合する。既定は計画表示・保存だけで、-Executeを明示した場合だけ実操作する。対象・比較対象・プラン・今回のAssignmentIdと新規OutputPathは必須。1台・Running・セッション固定false・公開無効などの保護条件を維持し、別の構成を勝手に試さない。
 - オフライン82項目: 4つの承認済み変更の順序、各段階のGET確認、失敗時の非再試行、元の状態への復元、同居アプリ/プランの比較、専用アプリ照合、秘密を含む模擬フィールドの非記録、既存レポート・リポジトリ内出力の拒否、出力失敗時の変更前停止を確認。
 - 実操作の記録はユーザーのTEMPにUTF-8テキスト（1行1JSON）で保存し、Plan/Baseline、4段階のVerified、Final/Succeededをファイルから読み直して確認した。実際のファイル名・各リソースIDは会話で案内し、Gitには含めない。今回からファイルパスだけで結果を渡せる運用とする。
 

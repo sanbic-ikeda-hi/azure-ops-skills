@@ -8,7 +8,7 @@
 
 | Section | 内容・境界 |
 |---|---|
-| Overview | 状態、所在地、プラン関連、HTTPS・公開アクセス |
+| Overview | 状態、enabled・scmSiteAlsoStopped、所在地、プラン関連、HTTPS・公開アクセス。欠落はnullとして扱い、stateから補完しない |
 | Runtime | コードランタイム、Flexのruntime・最大数・メモリ・always-ready要約。従来型Functionsのworker設定を知るためのアプリ設定取得はしない |
 | Network | HTTPS、公開アクセス、TLS、FTP、VNet関連、IP制限の件数・既定動作。IPルール本文・ヘッダーは出さない |
 | Identity | ID種別、principal/tenant ID、ユーザー割当IDの関連。関連先は追跡しない |
@@ -81,3 +81,14 @@ pwsh -NoProfile -File <helper-dir>/Invoke-ServiceOperation.ps1 `
 - Sandbox Functions FlexでStop/Start/Restart、最大数40→41→40を確認。functionAppConfig全体の比較用ハッシュは試験前と最終状態で一致した。
 - Sandbox Logic Apps ConsumptionでEnable→Disableを確認。定義・パラメーターのハッシュと取得対象のメタデータが試験前と一致した。HTTPトリガーは呼び出していない。
 - 詳細取得・共通ライブラリ・変更エントリーポイント・参照文書を配布対象へ追加した。各12件、3スキル計36ファイル。配置済みスキルの更新は別途ユーザーが行う。公開アクセスを実際に切り替える試験、従来型Functionsの変更、Standardの実取得・変更、コード/ホストの正常稼働は今回未検証。
+
+## App Serviceの追加診断
+
+App Service向けのGet-AppServiceDiagnostics.ps1と、値を変更しないAppServiceDiagnostics.ps1を追加した。
+認証プロバイダーの状態・既存登録保護、SCM応答分類、単一IPv4 /32の有効ルール照合、配布状態の判定を分けて再利用できる。
+既定は認証メタデータだけを取得し、HTTP診断はScmを明示する。基本認証ポリシーの読み取りは秘密取得とは別の追加権限。
+詳細はソースのappservice-operations.md、App Service配布先の同名参照文書を読む。他サービスにはApp Service専用ファイルを配布しない。
+
+Invoke-ServiceOperation.ps1の失敗結果にはFailureDetailsとしてHTTPステータスと固定のCategoryHintを記録する。
+SDKが例外を投げた場合も任意の本文は出さず、根拠を得られない分類はUnknownとする。
+追加した診断・ガードはオフラインの模擬要求で検証する。Azureでの認証設定更新、SCM配布、HTTP業務処理の再現確認は別途必要。

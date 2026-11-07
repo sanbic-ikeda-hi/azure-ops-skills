@@ -6,13 +6,25 @@ If a step fails, stop and inspect provision-state.json; never blindly rerun or a
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$TenantId,
-    [Parameter(Mandatory)][string]$SandboxSubscriptionId,
+    [string]$TenantId,
+    [string]$SandboxSubscriptionId,
     [string]$ProductionSubscriptionId,
-    [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')][string]$DisplayName = 'azure-ops-skills'
+    [ValidatePattern('^[A-Za-z0-9._-]{1,80}$')][string]$DisplayName,
+    [switch]$NonInteractive
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
+$localDirectory = Get-OpsLocalDirectory
+$connectionPath = Join-Path $localDirectory 'connection.json'
+$statePath = Join-Path $localDirectory 'provision-state.json'
+foreach ($existingPath in @($connectionPath,$statePath,(Join-Path $localDirectory 'computer-registration-state.json'))) {
+    if (Test-Path -LiteralPath $existingPath) { throw 'Existing connection or setup state. Inspect recovery; do not recreate or overwrite.' }
+}
+$basic = Resolve-OpsSetupBasic -Values @{tenantId=$TenantId;sandboxSubscriptionId=$SandboxSubscriptionId;productionSubscriptionId=$ProductionSubscriptionId;displayName=$DisplayName} -NonInteractive:$NonInteractive
+$TenantId=$basic.tenantId
+$SandboxSubscriptionId=$basic.sandboxSubscriptionId
+$ProductionSubscriptionId=if ($basic.ContainsKey('productionSubscriptionId')) {$basic.productionSubscriptionId} else {''}
+$DisplayName=$basic.displayName
 Assert-OpsGuid $TenantId 'TenantId'
 Assert-OpsGuid $SandboxSubscriptionId 'SandboxSubscriptionId'
 $subscriptionIds = @($SandboxSubscriptionId)
@@ -26,12 +38,6 @@ Import-Module Az.Resources -MinimumVersion 10.0.0 -ErrorAction Stop
 $roleTemplate = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\roles\services-reader.json') -Raw | ConvertFrom-Json
 Assert-OpsReaderRole $roleTemplate
 Get-Command New-SelfSignedCertificate -ErrorAction Stop | Out-Null
-$localDirectory = Get-OpsLocalDirectory
-$connectionPath = Join-Path $localDirectory 'connection.json'
-$statePath = Join-Path $localDirectory 'provision-state.json'
-if ((Test-Path -LiteralPath $connectionPath) -or (Test-Path -LiteralPath $statePath)) {
-    throw '初期設定または途中状態が存在します。再実行せず状態を確認してください。別PCは Register-Computer.ps1 を使います。'
-}
 $state = [ordered]@{ tenantId=$TenantId; subscriptionIds=$subscriptionIds; sandboxSubscriptionId=$SandboxSubscriptionId; stage='NotStarted' }
 function Save-ProvisionState {
     param([string]$Stage)

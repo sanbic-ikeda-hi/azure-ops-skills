@@ -5,13 +5,26 @@
 param(
     [ValidateSet('Plan','Grant','Revoke')][string]$Action = 'Plan',
     [string]$AssignmentId,
-    [ValidatePattern('^[A-Za-z0-9_-]{1,80}$')][string]$ResourceGroupName='rg-azureops-sandbox-test',
-    [ValidatePattern('^[A-Za-z0-9_-]{1,80}$')][string]$WorkflowName='la-azureops-sandbox-test'
+    [ValidatePattern('^[A-Za-z0-9_-]{1,80}$')][string]$ResourceGroupName,
+    [ValidatePattern('^[A-Za-z0-9_-]{1,80}$')][string]$WorkflowName
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $connection = Read-OpsConnection
 $config = Select-OpsSubscription $connection $connection.sandboxSubscriptionId
+# Access changes need names, not a creation location; revocation never resolves saved targets.
+if (-not $ResourceGroupName -or -not $WorkflowName) {
+    if ($Action -eq 'Revoke') { throw 'Revoke requires explicit ResourceGroupName and WorkflowName.' }
+    $settings=Read-OpsUserSettings
+    Assert-OpsUserSettingsConnection $settings $connection
+    if ($settings.sandbox.Contains('LogicApps')) {
+        if (-not $ResourceGroupName -and $settings.sandbox.LogicApps.Contains('resourceGroupName')) { $ResourceGroupName=$settings.sandbox.LogicApps.resourceGroupName }
+        if (-not $WorkflowName -and $settings.sandbox.LogicApps.Contains('workflowName')) { $WorkflowName=$settings.sandbox.LogicApps.workflowName }
+    }
+}
+if (-not $ResourceGroupName -or -not $WorkflowName) { throw 'Missing LogicApps resourceGroupName/workflowName. Ask the user.' }
+Assert-OpsSettingsValue resourceGroupName $ResourceGroupName
+Assert-OpsSettingsValue workflowName $WorkflowName
 $groupId = "/subscriptions/$($config.subscriptionId)/resourceGroups/$ResourceGroupName"
 $resourceId = "$groupId/providers/Microsoft.Logic/workflows/$WorkflowName"
 Assert-OpsResourceScope $resourceId $config.subscriptionId

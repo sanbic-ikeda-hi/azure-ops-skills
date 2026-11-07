@@ -28,6 +28,16 @@ foreach ($file in $scriptFiles) {
     Check ($errors.Count -eq 0) "PowerShell syntax: $($file.Name) $syntaxDetails"
 }
 
+# Fixed GUIDs must be deliberate test data or public Microsoft role IDs.
+$publicRoleIds=@('b7e6dc6d-f1e8-4753-8033-0f276bb0955b','0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')
+foreach ($file in $scriptFiles) {
+    $content=Get-Content -LiteralPath $file.FullName -Raw -Encoding utf8
+    foreach ($match in [regex]::Matches($content,'(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')) {
+        Check ($match.Value -match '^([0-9a-f])\1{7}-\1{4}-\1{4}-\1{4}-\1{12}$' -or $match.Value -in $publicRoleIds) "Only dummy or public role GUIDs: $($file.Name)"
+    }
+    Check ($content -notmatch '(?i)\b[A-Z]:[\\/]+Users[\\/]+[A-Za-z0-9_.-]+[\\/]') "No personal absolute path: $($file.Name)"
+}
+
 $sub = '11111111-1111-1111-1111-111111111111'
 $otherSub = '22222222-2222-2222-2222-222222222222'
 $testProfile = @{subscriptionIds=@($sub);sandboxSubscriptionId=$sub}
@@ -126,10 +136,17 @@ $legacyRole = [pscustomobject]@{
     NotActions=@(); DataActions=@(); NotDataActions=@(); AssignableScopes=$role.AssignableScopes
 }
 Rejects { Assert-OpsReaderRole $legacyRole } 'Old flat JSON that caused Invalid value for Permissions is rejected'
-foreach ($unsafeAction in @('Microsoft.Web/sites/write','Microsoft.Web/sites/delete','*/read','Microsoft.Web/sites/config/list/action','Microsoft.Web/sites/secrets/read')) {
+foreach ($unsafeAction in @('Microsoft.Web/sites/write','Microsoft.Web/sites/delete','*/read','Microsoft.Web/sites/config/list/action','Microsoft.Web/sites/secrets/read','Microsoft.Web/sites/publishxml/read','Microsoft.Web/sites/publishingcredentials/read','Microsoft.Web/sites/basicPublishingCredentialsPolicies/unknown/read','Microsoft.Unknown/service/read')) {
     $changed = Copy-TestRole
     $changed.Permissions[0].Actions += $unsafeAction
     Rejects { Assert-OpsReaderRole $changed } "Unsafe reader action rejected: $unsafeAction"
+}
+foreach ($safeAction in @('Microsoft.Web/sites/basicPublishingCredentialsPolicies/read','Microsoft.Insights/metricDefinitions/read','Microsoft.Insights/metrics/read')) {
+    $changed = Copy-TestRole
+    $changed.Permissions[0].Actions += $safeAction
+    Assert-OpsReaderRole $changed
+    Check $true "Explicit optional metadata reader action accepted: $safeAction"
+    Check ($safeAction -notin $role.Permissions[0].Actions) "Optional diagnostics do not widen the initial reader: $safeAction"
 }
 foreach ($field in @('NotActions','DataActions','NotDataActions')) {
     $changed = Copy-TestRole
@@ -270,7 +287,7 @@ function Test-SandboxCreationScenario {
     }
     $failed = $false
     try {
-        $output = & (Join-Path $PSScriptRoot 'New-SandboxLogicApp.ps1') -Create:($Scenario -ne 'Plan') -WarningAction SilentlyContinue -WarningVariable creationWarnings 6>$null
+        $output = & (Join-Path $PSScriptRoot 'New-SandboxLogicApp.ps1') -ResourceGroupName 'rg-azureops-sandbox-test' -WorkflowName 'la-azureops-sandbox-test' -Location 'japaneast' -Create:($Scenario -ne 'Plan') -WarningAction SilentlyContinue -WarningVariable creationWarnings 6>$null
     } catch { $failed = $true; $failureMessage = $_.Exception.Message }
     if ($Scenario -eq 'Plan') {
         Check (-not $failed -and $calls.connect -eq 0 -and $calls.group -eq 0 -and $calls.put -eq 0) 'Plan makes no connection or mutation'
@@ -322,12 +339,15 @@ foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
     }
     $previewRoot = Join-Path $root ('.local/offline-layout-' + [guid]::NewGuid().ToString('N'))
     & (Join-Path $PSScriptRoot 'Install-Skills.ps1') -Destination $previewRoot
-    Check ($copies.Count -eq 36) 'Each packaged skill contains its entrypoint, eight helpers and three shared references'
+    Check ($copies.Count -eq 48) 'Base package remains fifteen files per skill; App Service adds two helpers and one reference'
     foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
         $expected = @{
             'SKILL.md'="skills/$name/SKILL.md"
             'scripts/Common.ps1'='scripts/Common.ps1'
             'scripts/Authentication.ps1'='scripts/Authentication.ps1'
+            'scripts/UserSettings.ps1'='scripts/UserSettings.ps1'
+            'scripts/Get-UserSettings.ps1'='scripts/Get-UserSettings.ps1'
+            'scripts/Set-UserSettings.ps1'='scripts/Set-UserSettings.ps1'
             'scripts/Get-ServiceInventory.ps1'='scripts/Get-ServiceInventory.ps1'
             'scripts/Get-InventoryReport.ps1'='scripts/Get-InventoryReport.ps1'
             'scripts/Get-AppServiceQuota.ps1'='scripts/Get-AppServiceQuota.ps1'
@@ -338,6 +358,13 @@ foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
             'references/authentication.md'='docs/authentication.md'
             'references/service-operations.md'='docs/service-operations.md'
         }
+        if ($name -eq 'azure-appservice') {
+            $expected['scripts/AppServiceDiagnostics.ps1']='scripts/AppServiceDiagnostics.ps1'
+            $expected['scripts/Get-AppServiceDiagnostics.ps1']='scripts/Get-AppServiceDiagnostics.ps1'
+            $expected['references/appservice-operations.md']='docs/appservice-operations.md'
+        }
+        $skillTarget=[IO.Path]::GetFullPath((Join-Path $previewRoot $name)).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+        Check (@($copies | Where-Object {([IO.Path]::GetFullPath($_.Target)).StartsWith($skillTarget,[StringComparison]::OrdinalIgnoreCase)}).Count -eq $expected.Count) "Only declared files are packaged for $name"
         foreach ($relativePath in $expected.Keys) {
             $targetPath = [IO.Path]::GetFullPath((Join-Path (Join-Path $previewRoot $name) $relativePath))
             $copy = @($copies | Where-Object { [IO.Path]::GetFullPath($_.Target) -eq $targetPath })
@@ -346,6 +373,7 @@ foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
         }
     }
     Check (-not (Test-Path -LiteralPath $previewRoot)) 'Packaging simulation writes nothing'
+    Check (-not @($copies | Where-Object { (Split-Path $_.Source -Leaf) -in @('connection.json','user-settings.json','provision-state.json') }).Count) 'Local profiles are never packaged'
 }
 # Installation preview and conflicts must never write or partially install another skill.
 & {
@@ -369,6 +397,8 @@ foreach ($name in @('azure-appservice','azure-functions','azure-logicapps')) {
 & (Join-Path $PSScriptRoot 'Test-InventorySummary.ps1')
 & (Join-Path $PSScriptRoot 'Test-InventoryReportFile.ps1')
 & (Join-Path $PSScriptRoot 'Test-ServiceOperations.ps1')
+& (Join-Path $PSScriptRoot 'Test-AppServiceDiagnostics.ps1')
+& (Join-Path $PSScriptRoot 'Test-UserSettings.ps1')
 & (Join-Path $PSScriptRoot 'Test-SandboxAppService.ps1')
 & (Join-Path $PSScriptRoot 'Test-ArmErrorSummary.ps1')
 & (Join-Path $PSScriptRoot 'Test-AppServiceQuota.ps1')

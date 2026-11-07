@@ -4,19 +4,24 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Plan','Create')][string]$Action='Plan',
-    [ValidatePattern('^[a-z0-9]+$')][string]$Location='japaneast',
-    [ValidatePattern('^[A-Za-z0-9_-]{1,90}$')][string]$ResourceGroupName='rg-azureops-functions-test',
+    [ValidatePattern('^[a-z0-9]+$')][string]$Location,
+    [ValidatePattern('^[A-Za-z0-9_-]{1,90}$')][string]$ResourceGroupName,
+    [string]$FunctionAppName,
+    [string]$PlanName,
+    [string]$StorageAccountName,
     [Parameter(Mandatory)][string]$OutputPath
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $connection=Read-OpsConnection
 $config=Select-OpsSubscription $connection $connection.sandboxSubscriptionId
-$suffix=$config.applicationId.Replace('-','').Substring(0,12).ToLowerInvariant()
+$settings=Resolve-OpsSandboxSettings -Name Functions -Connection $connection -Values @{location=$Location;resourceGroupName=$ResourceGroupName;functionAppName=$FunctionAppName;planName=$PlanName;storageAccountName=$StorageAccountName}
+$Location=$settings.location
+$ResourceGroupName=$settings.resourceGroupName
 $groupId="/subscriptions/$($config.subscriptionId)/resourceGroups/$ResourceGroupName"
-$siteId="$groupId/providers/Microsoft.Web/sites/func-azureops-test-$suffix"
-$planId="$groupId/providers/Microsoft.Web/serverfarms/asp-azureops-functions-test"
-$storageName="stazopsfn$suffix"
+$siteId="$groupId/providers/Microsoft.Web/sites/$($settings.functionAppName)"
+$planId="$groupId/providers/Microsoft.Web/serverfarms/$($settings.planName)"
+$storageName=$settings.storageAccountName
 $storageId="$groupId/providers/Microsoft.Storage/storageAccounts/$storageName"
 $containerId="$storageId/blobServices/default/containers/deployment"
 $deploymentUrl="https://$storageName.blob.core.windows.net/deployment"

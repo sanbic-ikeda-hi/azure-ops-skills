@@ -96,7 +96,7 @@ function Test-FunctionsExecutionScenario {
         } else {throw 'Unexpected GET; storage and role APIs are forbidden'}
         @{StatusCode=200;Content=($item | ConvertTo-Json -Depth 14)}
     }
-    $arguments=@{ResourceId=$appId;PlanResourceId=$planId;StorageResourceId=$storageId;ManagedIdentityObjectId=$hostId;AssignmentId=$assignment;OutputPath=$report;Execute=($Scenario -ne 'Plan')}
+    $arguments=@{ResourceId=$appId;PlanResourceId=$planId;StorageResourceId=$storageId;ManagedIdentityObjectId=$hostId;AssignmentId=$assignment;OutputPath=$report;Location='japaneast';Execute=($Scenario -ne 'Plan')}
     if($Scenario -eq 'RepositoryReport') {$arguments.OutputPath=Join-Path $PSScriptRoot 'unsafe-report.txt'}
     if($Scenario -eq 'OtherAssignment') {$arguments.AssignmentId=$assignment.Replace('/test-function/','/other-app/')}
     if($Scenario -eq 'OtherStorageSubscription') {$arguments.StorageResourceId=$storageId.Replace($sub,$operator)}

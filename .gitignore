@@ -23,6 +23,8 @@ coverage/
 
 # Actual local profiles / registration state (also excluded if copied here accidentally)
 connection.json
+user-settings.json
+user-settings.json.lock
 provision-state.json
 computer-registration-state.json
 module-versions.json

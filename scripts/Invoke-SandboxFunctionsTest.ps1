@@ -8,13 +8,15 @@ param(
     [Parameter(Mandatory)][string]$ManagedIdentityObjectId,
     [Parameter(Mandatory)][string]$AssignmentId,
     [Parameter(Mandatory)][string]$OutputPath,
-    [ValidatePattern('^[a-z0-9]+$')][string]$Location='japaneast',
+    [ValidatePattern('^[a-z0-9]+$')][string]$Location,
     [switch]$Execute
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $connection=Read-OpsConnection
 $config=Select-OpsSubscription $connection $connection.sandboxSubscriptionId
+$settings=Resolve-OpsSandboxSettings -Name FunctionsTest -Connection $connection -Values @{resourceId=$ResourceId;planResourceId=$PlanResourceId;storageResourceId=$StorageResourceId;managedIdentityObjectId=$ManagedIdentityObjectId;location=$Location}
+$Location=$settings.location
 foreach($id in @($ResourceId,$PlanResourceId,$StorageResourceId)) {Assert-OpsResourceScope $id $config.subscriptionId}
 if($ResourceId -notmatch '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.Web/sites/[^/]+$' -or
     $PlanResourceId -notmatch '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.Web/serverfarms/[^/]+$' -or

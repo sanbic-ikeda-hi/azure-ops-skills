@@ -6,7 +6,7 @@ $ErrorActionPreference='Stop'
 $checks=0
 function Verify-Execution {param([bool]$Condition,[string]$Message) if(-not $Condition){throw "FAIL: $Message"};$script:checks++}
 function Test-ExecutionScenario {
-    param([string]$Scenario)
+    param([string]$Scenario,[string]$TestOS='Windows',[string]$TestSku='P0v4',[string]$TestLocation='westus3')
     $sub='11111111-1111-1111-1111-111111111111';$principal='22222222-2222-2222-2222-222222222222'
     $root="/subscriptions/$sub/resourceGroups/test-rg/providers/Microsoft.Web"
     $appId="$root/sites/test-app";$peerId="$root/sites/peer-app";$planId="$root/serverfarms/test-plan"
@@ -59,12 +59,12 @@ function Test-ExecutionScenario {
         }
         $calls.get++
         if($id -eq $planId) {
-            $item=@{id=$planId;type='Microsoft.Web/serverfarms';location='West US 3';sku=@{name='P0v4';tier='PremiumV4';capacity=$(if($Scenario -eq 'PlanChanged' -and $calls.writes.Count -gt 0){2}else{1})};properties=@{provisioningState='Succeeded';status='Ready';reserved=$false;numberOfSites=2;perSiteScaling=$false;zoneRedundant=$false}}
+            $item=@{id=$planId;type='Microsoft.Web/serverfarms';location=$(if($Scenario -eq 'WrongLocation'){'eastus'}else{$TestLocation});sku=@{name=$(if($Scenario -eq 'WrongSku'){'B1'}else{$TestSku});tier='PremiumV4';capacity=$(if($Scenario -eq 'PlanChanged' -and $calls.writes.Count -gt 0){2}else{1})};properties=@{provisioningState='Succeeded';status='Ready';reserved=$(if($Scenario -eq 'WrongOS'){$TestOS -ne 'Linux'}else{$TestOS -eq 'Linux'});numberOfSites=2;perSiteScaling=$false;zoneRedundant=$false}}
         } elseif($id -in @($appId,$peerId)) {
             if($id -eq $peerId){$calls.peer++}
             $pending=$id -eq $appId -and $simulatedApp.pending -gt 0
             if($pending){$simulatedApp.pending--}
-            $item=@{id=$id;type='Microsoft.Web/sites';kind='app';location='West US 3';properties=@{
+            $item=@{id=$id;type='Microsoft.Web/sites';kind=$(if($TestOS -eq 'Linux' -or $Scenario -eq 'WrongKind'){'app,linux'}else{'app'});location=$TestLocation;properties=@{
                 serverFarmId=$planId;state=$(if($id -eq $peerId){'Running'}elseif($pending -or ($Scenario -eq 'Timeout' -and $calls.writes.Count -gt 0)){'Starting'}else{$simulatedApp.running})
                 clientAffinityEnabled=$(if($id -eq $peerId){-not($Scenario -eq 'PeerChanged' -and $calls.peer -gt 1)}else{$simulatedApp.affinity})
                 httpsOnly=(-not($Scenario -eq 'ProtectedChanged' -and $calls.writes.Count -gt 0 -and $id -eq $appId))
@@ -73,7 +73,7 @@ function Test-ExecutionScenario {
         } else {throw 'Unexpected GET'}
         @{StatusCode=200;Content=($item | ConvertTo-Json -Depth 6)}
     }
-    $args=@{ResourceId=$appId;PlanResourceId=$planId;PeerResourceId=$peerId;AssignmentId=$assignment;OutputPath=$report;Execute=($Scenario -ne 'Plan')}
+    $args=@{ResourceId=$appId;PlanResourceId=$planId;PeerResourceId=$peerId;AssignmentId=$assignment;OutputPath=$report;ExpectedLocation=$TestLocation;ExpectedOperatingSystem=$TestOS;ExpectedSku=$TestSku;Execute=($Scenario -ne 'Plan')}
     if($Scenario -eq 'RepositoryReport'){$args.OutputPath=Join-Path $PSScriptRoot 'unsafe-report.txt'}
     if($Scenario -eq 'OtherAssignment'){$args.AssignmentId=$assignment.Replace('/test-app/','/other-app/')}
     if($Scenario -eq 'SamePeer'){$args.PeerResourceId=$appId}
@@ -97,5 +97,6 @@ function Test-ExecutionScenario {
         Verify-Execution ($calls.writes.Count -eq $expectedWrites) "No mutation retries or automatic rollback: $Scenario"
     }
 }
-foreach($scenario in @('Plan','Success','Pending','WrongBaseline','WrongIdentity','StopDenied','StartFailure','PatchFailure','ProtectedChanged','Timeout','PeerChanged','PlanChanged','ExistingReport','RepositoryReport','OtherAssignment','SamePeer','OutputFailure')) {Test-ExecutionScenario $scenario}
+foreach($scenario in @('Plan','Success','Pending','WrongBaseline','WrongIdentity','WrongLocation','WrongOS','WrongSku','WrongKind','StopDenied','StartFailure','PatchFailure','ProtectedChanged','Timeout','PeerChanged','PlanChanged','ExistingReport','RepositoryReport','OtherAssignment','SamePeer','OutputFailure')) {Test-ExecutionScenario $scenario}
+Test-ExecutionScenario -Scenario Success -TestOS Linux -TestSku B1 -TestLocation centralus
 Write-Host "PASS: $checks live-test orchestration/report checks (offline)."

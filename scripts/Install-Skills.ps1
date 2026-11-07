@@ -12,8 +12,11 @@ $authenticationSource = Join-Path $repoRoot 'docs\authentication.md'
 if (-not (Test-Path -LiteralPath $authenticationSource -PathType Leaf)) { throw '共通の認証手順がありません。' }
 $operationsSource = Join-Path $repoRoot 'docs\service-operations.md'
 if (-not (Test-Path -LiteralPath $operationsSource -PathType Leaf)) { throw 'Service operation reference is missing.' }
-$helpers = @('Common.ps1','Authentication.ps1','Get-ServiceInventory.ps1','Get-InventoryReport.ps1','Get-AppServiceQuota.ps1','ServiceOperations.ps1','Get-ServiceDetails.ps1','Invoke-ServiceOperation.ps1')
-foreach ($file in $helpers) {
+$appServiceHelpers = @('AppServiceDiagnostics.ps1','Get-AppServiceDiagnostics.ps1')
+$appServiceReference = Join-Path $repoRoot 'docs/appservice-operations.md'
+if (-not (Test-Path -LiteralPath $appServiceReference -PathType Leaf)) { throw 'App Service operation reference is missing.' }
+$helpers = @('Common.ps1','Authentication.ps1','UserSettings.ps1','Get-UserSettings.ps1','Set-UserSettings.ps1','Get-ServiceInventory.ps1','Get-InventoryReport.ps1','Get-AppServiceQuota.ps1','ServiceOperations.ps1','Get-ServiceDetails.ps1','Invoke-ServiceOperation.ps1')
+foreach ($file in ($helpers + $appServiceHelpers)) {
     if (-not (Test-Path -LiteralPath (Join-Path $repoRoot "scripts\$file") -PathType Leaf)) { throw "ヘルパーがありません: $file" }
 }
 foreach ($name in $names) {
@@ -34,9 +37,13 @@ foreach ($name in $names) {
         Copy-Item -LiteralPath $workflowSource -Destination $referenceDirectory
         Copy-Item -LiteralPath $authenticationSource -Destination $referenceDirectory
         Copy-Item -LiteralPath $operationsSource -Destination $referenceDirectory
+        if ($name -eq 'azure-appservice') {
+            Copy-Item -LiteralPath $appServiceReference -Destination $referenceDirectory
+        }
         $scriptDirectory = Join-Path $target 'scripts'
         New-Item -ItemType Directory -Path $scriptDirectory | Out-Null
-        foreach ($file in $helpers) {
+        $skillHelpers = if ($name -eq 'azure-appservice') { $helpers + $appServiceHelpers } else { $helpers }
+        foreach ($file in $skillHelpers) {
             Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\$file") -Destination $scriptDirectory
         }
     }

@@ -2,6 +2,7 @@
 Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot 'Authentication.ps1')
+. (Join-Path $PSScriptRoot 'UserSettings.ps1')
 
 function Assert-OpsResourceScope {
     param([string]$ResourceId, [string]$SubscriptionId)
@@ -69,7 +70,9 @@ function Get-OpsArmErrorSummary {
     elseif (@($codes | Where-Object { $_ -in @('InvalidAuthenticationToken','ExpiredAuthenticationToken','AuthenticationFailed') }).Count) { $category='Authentication' }
     elseif (@($codes | Where-Object { $_ -in @('AuthorizationFailed','LinkedAuthorizationFailed','DenyAssignmentAuthorizationFailed') }).Count) { $category='Authorization' }
     $status=0
-    [void][int]::TryParse([string](Read-ErrorField $Response 'StatusCode'),[ref]$status)
+    $rawStatus=Read-ErrorField $Response 'StatusCode'
+    if ($rawStatus -is [Net.HttpStatusCode]) {$status=[int]$rawStatus}
+    else {[void][int]::TryParse([string]$rawStatus,[ref]$status)}
     [pscustomobject][ordered]@{
         HttpStatus=$status; ErrorCodes=@($codes | Select-Object -Unique)
         ExtendedCodes=@($extended | Select-Object -Unique); CategoryHint=$category
@@ -287,6 +290,58 @@ function Get-OpsNextPath {
 }
 
 
+function Get-OpsApprovedReaderActions {
+    # Explicit management metadata only. Optional diagnostic rights are not granted by this list.
+    @(
+        'Microsoft.Resources/subscriptions/read',
+        'Microsoft.Resources/subscriptions/resourceGroups/read',
+        'Microsoft.Web/sites/read',
+        'Microsoft.Web/sites/config/read',
+        'Microsoft.Web/sites/slots/read',
+        'Microsoft.Web/sites/slots/config/read',
+        'Microsoft.Web/sites/functions/read',
+        'Microsoft.Web/sites/workflows/read',
+        'Microsoft.Web/serverfarms/read',
+        'Microsoft.Web/connections/read',
+        'Microsoft.Logic/workflows/read',
+        'Microsoft.Web/sites/basicPublishingCredentialsPolicies/read',
+        'Microsoft.Insights/metricDefinitions/read',
+        'Microsoft.Insights/metrics/read'
+    )
+}
+
+function Get-OpsFailureSummary {
+    param($Failure)
+    # Project only fixed categories and an HTTP number, never an exception message/type/body.
+    $exception = if ($Failure -is [Management.Automation.ErrorRecord]) { $Failure.Exception } else { $Failure }
+    $summary = $null
+    if ($exception -is [Exception] -and $exception.Data.Contains('AzureOpsFailure')) {
+        $summary = $exception.Data['AzureOpsFailure']
+    } else {
+        $response = $null
+        if ($null -ne $exception -and $exception.PSObject.Properties['Response']) { $response = $exception.Response }
+        $status = $null
+        if ($null -ne $response -and $response.PSObject.Properties['StatusCode']) { $status = $response.StatusCode }
+        $content = $null
+        if ($Failure -is [Management.Automation.ErrorRecord] -and $null -ne $Failure.ErrorDetails) {
+            # The SDK error body is inspected in memory only; arbitrary text is never returned.
+            $content = $Failure.ErrorDetails.Message
+        }
+        $summary = Get-OpsArmErrorSummary @{StatusCode=$status;Content=$content}
+    }
+    $http = 0
+    if ($summary -is [Collections.IDictionary]) {
+        $status = $summary['HttpStatus']; $category = $summary['CategoryHint']
+    } else {
+        $status = if ($null -ne $summary -and $summary.PSObject.Properties['HttpStatus']) { $summary.HttpStatus } else { $null }
+        $category = if ($null -ne $summary -and $summary.PSObject.Properties['CategoryHint']) { $summary.CategoryHint } else { $null }
+    }
+    if ($status -is [Net.HttpStatusCode]) {$http=[int]$status}
+    else {[void][int]::TryParse([string]$status,[ref]$http)}
+    if ($category -notin @('Quota','ProviderRegistration','Authentication','Authorization')) { $category='Unknown' }
+    [ordered]@{HttpStatus=$(if ($http -ge 100 -and $http -le 599) {$http} else {$null});CategoryHint=$category;DetailsOmitted=$true}
+}
+
 function Assert-OpsReaderRole {
     param($Role)
     if (-not $Role.PSObject.Properties['Permissions'] -or @($Role.Permissions).Count -ne 1) {
@@ -299,7 +354,7 @@ function Assert-OpsReaderRole {
     }
     if (@($permission.Actions).Count -eq 0) { throw '読み取り操作が空です。' }
     foreach ($action in $permission.Actions) {
-        if ($action -notmatch '/read$' -or $action -match '(?i)\*|accesskeys|listkeys|secrets|connectionstrings|appsettings|runs|credentials') {
+        if ($action -isnot [string] -or $action -notin @(Get-OpsApprovedReaderActions)) {
             throw '読み取りロールに未許可の操作があります。'
         }
     }

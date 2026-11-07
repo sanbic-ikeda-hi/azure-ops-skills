@@ -73,7 +73,9 @@ try {
 } catch {
     # Our own errors are bounded; do not persist arbitrary exception/ARM message text.
     $result.Failure='Operation stopped. Inspect scope, reviewed plan and current state; no retry or rollback was performed.'
-    throw
+    $result['FailureDetails']=Get-OpsFailureSummary $_
+    $result['HttpStatus']=$result.FailureDetails.HttpStatus
+    throw "Operation stopped at $($result.Stage). See result: $reportPath"
 } finally {
     if ($writer) {
         try {

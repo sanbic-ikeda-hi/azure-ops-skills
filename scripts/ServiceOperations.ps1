@@ -25,10 +25,17 @@ function Invoke-OpsServiceRequest {
     $requestParameters=@{Path="${Id}?api-version=$version";Method=$Method;ErrorAction='Stop'}
     if ($Body) {$requestParameters.Payload=$Body | ConvertTo-Json -Depth 60 -Compress}
     try {$response=Invoke-AzRestMethod @requestParameters}
-    catch {throw 'Management request failed. No automatic retry; response details are omitted.'}
+    catch {
+        $failure=[InvalidOperationException]::new('Management request failed. No automatic retry; details omitted.')
+        $failure.Data['AzureOpsFailure']=Get-OpsFailureSummary $_
+        throw $failure
+    }
     if (($Method -eq 'GET' -and $response.StatusCode -ne 200) -or
         ($Method -ne 'GET' -and $response.StatusCode -notin @(200,201,202,204))) {
-        throw "Management request failed: $(Get-OpsArmErrorSummary $response | ConvertTo-Json -Depth 6 -Compress)"
+        $summary=Get-OpsArmErrorSummary $response
+        $failure=[InvalidOperationException]::new('Management request failed. No automatic retry; details omitted.')
+        $failure.Data['AzureOpsFailure']=@{HttpStatus=$summary.HttpStatus;CategoryHint=$summary.CategoryHint}
+        throw $failure
     }
     if ($Method -ne 'GET') {return [int]$response.StatusCode}
     try {$item=$response.Content | ConvertFrom-Json -AsHashtable -ErrorAction Stop}
@@ -55,6 +62,13 @@ function Get-OpsScalar {
     $value=$Object[$Name]
     if ($null -ne $value -and $value -isnot [string] -and $value -isnot [bool] -and
         $value -isnot [ValueType]) {throw 'Unexpected metadata field shape.'}
+    return $value
+}
+
+function Get-OpsBoolean {
+    param($Object,[string]$Name)
+    $value=Get-OpsScalar $Object $Name
+    if ($null -ne $value -and $value -isnot [bool]) {throw 'Expected boolean management metadata. Details omitted.'}
     return $value
 }
 
@@ -106,7 +120,7 @@ function ConvertTo-OpsServiceDetail {
     $result=[ordered]@{ResourceId=$Item['id'];Service=$service;Kind=(Get-OpsScalar $Item 'kind');Location=(Get-OpsScalar $Item 'location');State=(Get-OpsScalar $p 'state')}
     $consumption=$Item['type'] -ieq 'Microsoft.Logic/workflows'
     if ('Overview' -in $Section) {
-        $result['Overview']=[ordered]@{ProvisioningState=(Get-OpsScalar $p 'provisioningState');PlanResourceId=(Get-OpsScalar $p 'serverFarmId');Linux=(Get-OpsScalar $p 'reserved');HttpsOnly=(Get-OpsScalar $p 'httpsOnly');PublicNetworkAccess=(Get-OpsScalar $p 'publicNetworkAccess')}
+        $result['Overview']=[ordered]@{Enabled=(Get-OpsBoolean $p 'enabled');ScmSiteAlsoStopped=(Get-OpsBoolean $p 'scmSiteAlsoStopped');ProvisioningState=(Get-OpsScalar $p 'provisioningState');PlanResourceId=(Get-OpsScalar $p 'serverFarmId');Linux=(Get-OpsScalar $p 'reserved');HttpsOnly=(Get-OpsScalar $p 'httpsOnly');PublicNetworkAccess=(Get-OpsScalar $p 'publicNetworkAccess')}
     }
     if ('Runtime' -in $Section) {
         if ($consumption -or $service -eq 'LogicApps') {$result['Runtime']=@{Status='NotApplicableToWorkflowMetadata'}}

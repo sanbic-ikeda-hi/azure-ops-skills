@@ -106,8 +106,7 @@ function Test-FixtureScenario {
     }
     $failed=$false
     $output=@()
-    $locationArgument=@{}
-    if ($ExplicitLocation) { $locationArgument.Location=$TestLocation }
+    $locationArgument=@{Location=$TestLocation;ResourceGroupName=$groupName;PlanName=('asp-azureops-sandbox-test'+$regionSuffix);AppName=('app-azureops-test-222222222222'+$regionSuffix)}
     try {$output=& (Join-Path $PSScriptRoot 'Set-SandboxAppServiceFixture.ps1') -Action $action -Sku $testSku @locationArgument -WarningAction SilentlyContinue -WarningVariable fixtureWarnings 6>$null}
     catch {$failed=$true; $failure=$_.Exception.Message}
     $success=$Scenario -in @('Plan','CreateSuccess','ResumeSuccess','AddSuccess','RemoveSuccess','RemovePlanOnly')

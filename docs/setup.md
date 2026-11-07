@@ -1,5 +1,19 @@
 # Azure の初期準備
 
+## 入力を保存して再利用する
+
+基本情報は `LOCALAPPDATA\AzureOpsSkills\user-settings.json` に記録する。実値はリポジトリへ入れない。形式と登録方法は[ユーザー固有情報](authentication.md#ユーザー固有情報の確認と保存)を参照。
+
+~~~powershell
+pwsh -NoProfile -File .\scripts\Get-UserSettings.ps1 -Purpose Setup
+# ユーザーが実行。不足するTenantId・SandboxSubscriptionIdだけを質問する。
+pwsh -NoProfile -File .\scripts\Initialize-AzureOps.ps1
+~~~
+
+明示引数が保存値より優先する。任意の本番SubscriptionIdや表示名も事前登録できる。確認画面でyを入力した後、基本情報を保存してAzure初期設定へ進む。対話入力中に確認した不足値は途中保存する。-NonInteractiveは質問・最終確認を省き、必要値がなければAzure接続前に不足項目を示して停止する。値が揃っていれば実際の初期設定へ進むため、状態確認やドライランの代用にしない。
+
+既存のconnection.jsonや進行状況がある場合は、質問・保存・Azure接続より先に停止する。記録に既存ApplicationIdがある場合もアプリを再作成せず、別PC登録または復旧手順を確認する。認証・権限・モジュールの不足を自動修正する機能ではない。以下の従来の明示引数による実行も利用できる。
+
 この手順はユーザーが PowerShell 7 で実行します。Codexに管理者アカウントの接続を渡す手順ではありません。
 新規アプリ・証明書・ロールを作成するため、下記の作成内容を確認してから実行してください。
 

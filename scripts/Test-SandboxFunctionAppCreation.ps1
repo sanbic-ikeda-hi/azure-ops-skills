@@ -108,7 +108,7 @@ function Test-FunctionCreationScenario {
         $simulated.resources[$id]=$resource
         @{StatusCode=201;Content='DO_NOT_EMIT_RAW_RESPONSE'}
     }
-    $parameters=@{Action=$(if($Scenario -eq 'Plan'){'Plan'}else{'Create'});OutputPath=$reportPath}
+    $parameters=@{Action=$(if($Scenario -eq 'Plan'){'Plan'}else{'Create'});OutputPath=$reportPath;Location='japaneast';ResourceGroupName='rg-azureops-functions-test';FunctionAppName='func-azureops-test-222222222222';PlanName='asp-azureops-functions-test';StorageAccountName='stazopsfn222222222222'}
     if($Scenario -eq 'InvalidGroup') {$parameters.ResourceGroupName='../other'}
     if($Scenario -eq 'InvalidLocation') {$parameters.Location='bad?region'}
     if($Scenario -eq 'ReportInRepository') {$parameters.OutputPath=Join-Path (Split-Path $PSScriptRoot -Parent) 'should-not-exist.txt'}

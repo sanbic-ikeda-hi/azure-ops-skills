@@ -13,7 +13,7 @@ App Service / Functions / Logic Apps を、専用のエンタープライズア�
 2. 初期設定は専用アプリ・PC用証明書・読み取り専用カスタムロールを作ります。クライアントシークレットや変更権限は作りません。
 3. 接続後に読み取りを確認し、ユーザー共通のスキル配置先にインストールします。
 
-必要な情報は TenantId、SandboxSubscriptionId、必要ならProductionSubscriptionId。アプリ名の初期値は azure-ops-skills です。
+必要な情報は TenantId、SandboxSubscriptionId、必要ならProductionSubscriptionId。アプリ名の初期値は azure-ops-skills です。非秘密の基本情報はLocalAppDataのuser-settings.jsonへ保存し、セットアップとスキル利用時に不足分だけ確認します。登録を指示したRG・リソース・Sandbox試験条件も再利用できます。形式・取得・部分更新は[ユーザー固有情報](docs/authentication.md#ユーザー固有情報の確認と保存)を参照してください。
 GitHub のリポジトリURLは、push・別PCでのclone時に必要です。
 
 ~~~powershell
@@ -49,9 +49,9 @@ Windows側の実行承認と、Azure側で許可する操作は別です。初�
 SKILLは `-OutputMode Summary -OutputPath <新規の絶対パス.txt>` を使い、既定20件の要約と整形済み全結果のファイルを併用します。SummaryでRGを指定するとRG単位で取得し、3サービスをまとめる依頼は `-Service All` で共通APIを重複取得しません。`TotalCount` は取得範囲内の絞り込み前、`Count` は一致件数、`ReturnedCount` は表示件数です。省略は `DisplayTruncated` で示し、取得完了の `Complete` と区別します。
 `Get-InventoryReport.ps1 -Path <保存先.txt> -Skip 20 -Limit 20` で追加表示できます。Azure接続はなく、過去の取得時刻と `Source=SavedReport` を示します。変更前は対象を再取得します。既定のFullは従来の項目・全件出力・RGフィルター適用前のサブスクリプション単位件数を維持します。どのモードもタグや秘密設定を検索・出力しません。詳細は[共通手順](docs/change-workflow.md)を参照してください。
 
-新規配布では、各スキルに共通参照2件（change-workflow.md、authentication.md）とヘルパー5件（Common.ps1、Authentication.ps1、Get-ServiceInventory.ps1、Get-InventoryReport.ps1、Get-AppServiceQuota.ps1）を同梱します。SKILL.mdを含め8件×3スキルの計24ファイルです。クォータ照会だけはユーザー実行専用です。
+新規配布では、各スキルに共通参照3件（change-workflow.md、authentication.md、service-operations.md）とヘルパー11件（Common.ps1、Authentication.ps1、UserSettings.ps1、Get-UserSettings.ps1、Set-UserSettings.ps1、Get-ServiceInventory.ps1、Get-InventoryReport.ps1、Get-AppServiceQuota.ps1、ServiceOperations.ps1、Get-ServiceDetails.ps1、Invoke-ServiceOperation.ps1）を同梱します。SKILL.mdを含め基本は15件×3スキルです。App Serviceには追加のAppServiceDiagnostics.ps1・Get-AppServiceDiagnostics.ps1とappservice-operations.mdを同梱し、合計48ファイルです。クォータ照会だけはユーザー実行専用です。実際のユーザー設定・接続設定は同梱しません。
 リソース作成は3サービスとも必須の対応用途として維持します。繰り返し使う手順と、再利用・検証に適した作成ヘルパーをスキルと一緒に管理します。今回の共通エラー診断は同梱済みのCommon.ps1へ追加し、案件固有の試験用作成・削除スクリプトとは分けています。汎用作成ヘルパー全般の実装・実機検証を完了したという意味ではありません。
-既存配置を更新するときも、上記8ファイルの差分をスキルごとに確認します。Common.ps1だけを更新してAuthentication.ps1を欠落させないでください。共通参照はリポジトリのdocsから各スキルのreferencesへ配置します。既存スキルの自動上書きは行いません。
+既存配置を更新するときも、基本15ファイルとApp Service専用3ファイルの差分をスキルごとに確認します。Common.ps1とAuthentication.ps1・UserSettings.ps1を一緒に管理してください。共通参照はリポジトリのdocsから各スキルのreferencesへ配置します。既存スキルの自動上書きは行いません。このPCでは2026-11-07の更新依頼に基づき旧版を読込先の外へ退避し、45ファイルすべての配布元との一致を確認しました。基本IDはリポジトリ外へ記録し、既存の接続設定・証明書は維持しています。
 
 ## 段階的な共通化
 
@@ -130,3 +130,13 @@ Logic Apps Standardの実リソース変更、別PCへの復元は未検証で�
 - [Codex のユーザー共通スキル](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills)
 - [Azure RBAC の割り当て範囲](https://learn.microsoft.com/azure/role-based-access-control/role-assignments-steps)
 - [証明書によるサービスプリンシパル認証](https://learn.microsoft.com/entra/identity-platform/howto-authenticate-service-principal-powershell)
+
+## App Serviceの認証・SCM運用改善
+
+[追加運用手順](docs/appservice-operations.md)に、authsettingsV2の既定値と実観測の区別、既存プロバイダー保護、停止中SCMの403診断、OneDeployとHTTP確認をまとめた。
+Get-AppServiceDiagnostics.ps1は専用アプリによる読み取り診断。共通の認証更新・ZIP配布コマンドは追加していない。
+初期読み取りロールを変更せず、基本認証ポリシー・メトリックの追加読み取りは個別リソースへ案内する。
+失敗した変更は停止し、許可済みの独立した調査は継続する。本人操作は案件内の実行ファイルと事前指定ログを用意して引き渡す。
+
+追加テストは停止403・既存登録保護・権限範囲・秘密非出力と部分診断の継続を模擬通信で確認する。
+この改善に伴うAzure再現試験と、配置済みスキルの更新は行っていない。リポジトリの実装と配布済みコピーを区別する。

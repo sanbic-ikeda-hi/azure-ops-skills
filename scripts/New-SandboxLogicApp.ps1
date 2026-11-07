@@ -4,14 +4,18 @@
 [CmdletBinding()]
 param(
     [switch]$Create,
-    [ValidatePattern('^[A-Za-z0-9_-]{1,80}$')][string]$ResourceGroupName = 'rg-azureops-sandbox-test',
-    [ValidatePattern('^[A-Za-z0-9_-]{1,80}$')][string]$WorkflowName = 'la-azureops-sandbox-test',
-    [ValidatePattern('^[a-z0-9]+$')][string]$Location = 'japaneast'
+    [ValidatePattern('^[A-Za-z0-9_-]{1,80}$')][string]$ResourceGroupName,
+    [ValidatePattern('^[A-Za-z0-9_-]{1,80}$')][string]$WorkflowName,
+    [ValidatePattern('^[a-z0-9]+$')][string]$Location
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $connection = Read-OpsConnection
 $config = Select-OpsSubscription $connection $connection.sandboxSubscriptionId
+$settings = Resolve-OpsSandboxSettings -Name LogicApps -Connection $connection -Values @{resourceGroupName=$ResourceGroupName;workflowName=$WorkflowName;location=$Location}
+$ResourceGroupName=$settings.resourceGroupName
+$WorkflowName=$settings.workflowName
+$Location=$settings.location
 $groupId = "/subscriptions/$($config.subscriptionId)/resourceGroups/$ResourceGroupName"
 $resourceId = "$groupId/providers/Microsoft.Logic/workflows/$WorkflowName"
 Assert-OpsResourceScope $resourceId $config.subscriptionId

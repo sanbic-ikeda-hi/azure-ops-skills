@@ -4,19 +4,22 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Plan','CreatePlan','ResumePlan','AddApp','Remove')][string]$Action='Plan',
-    [ValidateSet('B1','P0v4')][string]$Sku='P0v4',
-    [ValidateSet('japaneast','southeastasia','westus2','centralus')][string]$Location='japaneast'
+    [ValidateSet('B1','P0v4')][string]$Sku,
+    [ValidatePattern('^[a-z0-9]+$')][string]$Location,
+    [string]$ResourceGroupName,
+    [string]$PlanName,
+    [string]$AppName
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $connection = Read-OpsConnection
 $config = Select-OpsSubscription $connection $connection.sandboxSubscriptionId
-$Location = $Location.ToLowerInvariant()
-# Preserve existing Japan East targets; other regions always use separate names.
-$regionSuffix = if ($Location -eq 'japaneast') { '' } else { "-$Location" }
-$groupName = 'rg-azureops-appservice-test' + $regionSuffix
-$planName = 'asp-azureops-sandbox-test' + $regionSuffix
-$appName = 'app-azureops-test-' + $config.applicationId.Replace('-','').Substring(0,12) + $regionSuffix
+$settings=Resolve-OpsSandboxSettings -Name AppServiceFixture -Connection $connection -ExplicitOnly:($Action -eq 'Remove') -Values @{sku=$Sku;location=$Location;resourceGroupName=$ResourceGroupName;planName=$PlanName;appName=$AppName}
+$Location=$settings.location
+$Sku=$settings.sku
+$groupName=$settings.resourceGroupName
+$planName=$settings.planName
+$appName=$settings.appName
 $groupId = "/subscriptions/$($config.subscriptionId)/resourceGroups/$groupName"
 $planId = "$groupId/providers/Microsoft.Web/serverfarms/$planName"
 $appId = "$groupId/providers/Microsoft.Web/sites/$appName"

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "basic": {
+    "tenantId": "00000000-0000-0000-0000-000000000000",
+    "sandboxSubscriptionId": "00000000-0000-0000-0000-000000000000",
+    "displayName": "azure-ops-skills"
+  },
+  "targets": [],
+  "sandbox": {
+    "LogicApps": {
+      "resourceGroupName": "example-test-rg",
+      "workflowName": "example-test-workflow",
+      "location": "japaneast"
+    }
+  }
+}

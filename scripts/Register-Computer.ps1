@@ -2,13 +2,25 @@
 # USER-RUN ONLY. Add this PC's public certificate to an EXISTING app; do not recreate the app or change RBAC.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$TenantId,
-    [Parameter(Mandatory)][string]$SandboxSubscriptionId,
+    [string]$TenantId,
+    [string]$SandboxSubscriptionId,
     [string]$ProductionSubscriptionId,
-    [Parameter(Mandatory)][string]$ApplicationId
+    [string]$ApplicationId,
+    [switch]$NonInteractive
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
+$localDirectory = Get-OpsLocalDirectory
+$connectionPath = Join-Path $localDirectory 'connection.json'
+$statePath = Join-Path $localDirectory 'computer-registration-state.json'
+foreach ($existingPath in @($connectionPath,$statePath,(Join-Path $localDirectory 'provision-state.json'))) {
+    if (Test-Path -LiteralPath $existingPath) { throw 'Existing connection or setup state. Inspect recovery; do not recreate or overwrite.' }
+}
+$basic = Resolve-OpsSetupBasic -Values @{tenantId=$TenantId;sandboxSubscriptionId=$SandboxSubscriptionId;productionSubscriptionId=$ProductionSubscriptionId;applicationId=$ApplicationId} -RegisterComputer -NonInteractive:$NonInteractive
+$TenantId=$basic.tenantId
+$SandboxSubscriptionId=$basic.sandboxSubscriptionId
+$ApplicationId=$basic.applicationId
+$ProductionSubscriptionId=if ($basic.ContainsKey('productionSubscriptionId')) {$basic.productionSubscriptionId} else {''}
 foreach ($value in @($TenantId,$SandboxSubscriptionId,$ApplicationId)) { Assert-OpsGuid $value }
 $subscriptionIds = @($SandboxSubscriptionId)
 if ($ProductionSubscriptionId) {
@@ -18,12 +30,6 @@ if ($ProductionSubscriptionId) {
 }
 Import-Module Az.Accounts -ErrorAction Stop
 Import-Module Az.Resources -ErrorAction Stop
-$localDirectory = Get-OpsLocalDirectory
-$connectionPath = Join-Path $localDirectory 'connection.json'
-$statePath = Join-Path $localDirectory 'computer-registration-state.json'
-if ((Test-Path -LiteralPath $connectionPath) -or (Test-Path -LiteralPath $statePath)) {
-    throw 'このPCには設定または途中状態があります。上書きせず確認してください。'
-}
 $connected = $false
 try {
     Disable-AzContextAutosave -Scope Process | Out-Null

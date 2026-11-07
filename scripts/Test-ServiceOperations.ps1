@@ -33,7 +33,7 @@ function Test-OperationScenario {
     if($type -eq 'Microsoft.Logic/workflows') {$fixtureId=$fixtureId.Replace('Microsoft.Web/sites','Microsoft.Logic/workflows')}
     if($Scenario -eq 'FlexLow') {$value='1'}
     if($Scenario -eq 'FlexInvalid') {$value='1001'}
-    $site=@{id=$fixtureId;name='test-app';type=$type;kind=$kind;location='westus3';identity=@{type='SystemAssigned';principalId=$operator;tenantId=$sub};tags=@{secret='DO_NOT_OUTPUT_TAG'};properties=@{state=$state;provisioningState='Succeeded';serverFarmId=$planId;reserved=$true;httpsOnly=$true;publicNetworkAccess='Disabled';clientAffinityEnabled=$false;secret='DO_NOT_OUTPUT_PROPERTY'}}
+    $site=@{id=$fixtureId;name='test-app';type=$type;kind=$kind;location='westus3';identity=@{type='SystemAssigned';principalId=$operator;tenantId=$sub};tags=@{secret='DO_NOT_OUTPUT_TAG'};properties=@{state=$state;enabled=$true;scmSiteAlsoStopped=$false;provisioningState='Succeeded';serverFarmId=$planId;reserved=$true;httpsOnly=$true;publicNetworkAccess='Disabled';clientAffinityEnabled=$false;secret='DO_NOT_OUTPUT_PROPERTY'}}
     if($kind -eq 'functionapp,linux') {
         $site.properties.functionAppConfig=@{runtime=@{name='node';version='22'};deployment=@{storage=@{type='blobContainer';value='DO_NOT_OUTPUT_STORAGE';authentication=@{type='SystemAssignedIdentity'}}};siteUpdateStrategy=@{type='Recreate'};scaleAndConcurrency=@{maximumInstanceCount=40;instanceMemoryMB=2048;alwaysReady=@(@{name='http';instanceCount=0});triggers=@{http=@{perInstanceConcurrency=8}}}}
     }
@@ -70,6 +70,13 @@ function Test-OperationScenario {
         if($Method -ne 'GET') {
             $calls.write++
             if($Scenario -eq 'WriteDenied'){return @{StatusCode=403;Content='DO_NOT_OUTPUT_ERROR'}}
+            if($Scenario -eq 'WriteThrown403'){
+                $exception=[Exception]::new('DO_NOT_OUTPUT_EXCEPTION')
+                $exception | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{StatusCode=[Net.HttpStatusCode]::Forbidden})
+                $record=[Management.Automation.ErrorRecord]::new($exception,'Mock',[Management.Automation.ErrorCategory]::PermissionDenied,$null)
+                $record.ErrorDetails=[Management.Automation.ErrorDetails]::new('{"error":{"code":"AuthorizationFailed","message":"DO_NOT_OUTPUT_BODY"}}')
+                throw $record
+            }
             if($Scenario -eq 'NoConverge'){return @{StatusCode=202}}
             if($Method -eq 'POST') {
                 if($requestId -notin @("$fixtureId/start","$fixtureId/stop","$fixtureId/restart","$fixtureId/enable","$fixtureId/disable")){throw 'Unexpected action'}
@@ -140,12 +147,17 @@ function Test-OperationScenario {
         if($Scenario -eq 'DifferentValue'){$parameters.Operation='SetHttpsOnly';$parameters.Value='false'}
         $failed=$false;$failureMessage=''
         try {& $scriptFile @parameters | Out-Null}catch {$failed=$true;$failureMessage=$_.Exception.Message}
-        $expectedFailure=$Scenario -in @('ChangedBefore','ChangedImmediately','WrongContext','WriteDenied','NoConverge','ProtectedChanged','Expired','WrongPlanTarget','ExtraBefore','DifferentValue')
+        $expectedFailure=$Scenario -in @('ChangedBefore','ChangedImmediately','WrongContext','WriteDenied','WriteThrown403','NoConverge','ProtectedChanged','Expired','WrongPlanTarget','ExtraBefore','DifferentValue')
         Verify ($failed -eq $expectedFailure) "Execution outcome: $Scenario ($failureMessage; mock: $($calls['mockError']))"
         $saved=Microsoft.PowerShell.Management\Get-Content -LiteralPath $resultFile -Raw | ConvertFrom-Json
         Verify ($saved.Succeeded -ne $expectedFailure) "Saved result is truthful: $Scenario"
         $expectedWrites=if($Scenario -in @('ChangedBefore','ChangedImmediately','WrongContext','Expired','WrongPlanTarget','ExtraBefore','DifferentValue','NoOp')){0}else{1}
         Verify ($calls.write -eq $expectedWrites) "Single write or rejection without retry: $Scenario"
+        if($Scenario -in @('WriteDenied','WriteThrown403')){
+            Verify ($saved.HttpStatus -eq 403 -and $saved.FailureDetails.HttpStatus -eq 403) 'Returned and thrown write failures retain status in the saved operation result'
+            Verify ($saved.FailureDetails.CategoryHint -eq $(if($Scenario -eq 'WriteThrown403'){'Authorization'}else{'Unknown'})) 'Failure category requires structured evidence'
+            Verify ($failureMessage -notmatch 'DO_NOT_OUTPUT_') 'Write exception output is sanitized'
+        }
     }
     Verify ($calls.connect -eq $calls.disconnect) "Disconnect: $Scenario"
     foreach($path in @($planFile,$resultFile)) {
@@ -161,7 +173,7 @@ try {
     $projected=ConvertTo-OpsServiceDetail @{id='mock';type='Microsoft.Logic/workflows';properties=@{state='Disabled';definition=@{triggers=@{};actions=$many}}} @('Structure') @{} $null 3
     Verify ($projected.Structure.actions.Count -eq 1000 -and $projected.Structure.actions.Items.Count -eq 3 -and $projected.Structure.actions.DisplayTruncated) 'Large workflow structures respect display limits and retain total counts'
     Verify (($projected | ConvertTo-Json -Depth 20) -notmatch 'DO_NOT_OUTPUT_') 'Workflow inputs are not serialized'
-    foreach($scenario in @('Stop','Start','Restart','Enable','Disable','Affinity','Https','PublicAccess','Flex','FlexLow','FlexInvalid','Standard','InvalidValue','NoOp','ChangedBefore','ChangedImmediately','WrongContext','ReadDenied','WriteDenied','NoConverge','ProtectedChanged','Expired','WrongPlanTarget','ExtraBefore','DifferentValue','WrongResponse','BadJson','RequestException','Details','FlexDetails','Overview')) {Test-OperationScenario $scenario}
+    foreach($scenario in @('Stop','Start','Restart','Enable','Disable','Affinity','Https','PublicAccess','Flex','FlexLow','FlexInvalid','Standard','InvalidValue','NoOp','ChangedBefore','ChangedImmediately','WrongContext','ReadDenied','WriteDenied','WriteThrown403','NoConverge','ProtectedChanged','Expired','WrongPlanTarget','ExtraBefore','DifferentValue','WrongResponse','BadJson','RequestException','Details','FlexDetails','Overview')) {Test-OperationScenario $scenario}
     $config=@{subscriptionId='11111111-1111-1111-1111-111111111111'}
     Rejects {Assert-OpsServiceId '/subscriptions/99999999-9999-9999-9999-999999999999/resourceGroups/rg/providers/Microsoft.Web/sites/app' $config} 'Cross-subscription rejected'
     Rejects {Assert-OpsServiceId '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg/providers/Microsoft.Web/sites/app/slots/staging' $config} 'Slot rejected'

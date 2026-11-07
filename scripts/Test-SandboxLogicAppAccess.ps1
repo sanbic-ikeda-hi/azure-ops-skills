@@ -86,7 +86,8 @@ function Test-SandboxAccessScenario {
         $calls.revoke++; $calls.removed=$InputObject.RoleAssignmentId
     }
     $invoke = @{Action=$(if ($Scenario -eq 'Plan') {'Plan'} elseif ($Scenario.StartsWith('Revoke')) {'Revoke'} else {'Grant'}); WarningAction='SilentlyContinue'}
-    if ($Alternate) {$invoke.ResourceGroupName=$groupName;$invoke.WorkflowName=$workflowName}
+    $invoke.ResourceGroupName=$groupName
+    $invoke.WorkflowName=$workflowName
     if ($invoke.Action -eq 'Revoke') {
         $invoke.AssignmentId = if ($Scenario -eq 'RevokeBadScope') {"/subscriptions/$otherSub/providers/Microsoft.Authorization/roleAssignments/$roleId"} else {$assignmentId}
     }

@@ -1,5 +1,53 @@
 # 共通認証と実行環境
 
+## ユーザー固有情報の確認と保存
+
+接続情報は `LOCALAPPDATA\AzureOpsSkills\connection.json`、追加の非秘密設定は同じフォルダーの `user-settings.json` に置く。3スキルとソースは同じ保存先を参照し、案件フォルダーや現在の作業ディレクトリから設定を探さない。
+
+Azure操作の前に、ソースではscripts、配布先ではSKILL.mdの隣のscriptsにあるGet-UserSettings.ps1を使う。
+
+~~~powershell
+pwsh -NoProfile -File '<HELPER_PATH>\Get-UserSettings.ps1'
+pwsh -NoProfile -File '<HELPER_PATH>\Get-UserSettings.ps1' -Alias '登録した別名'
+pwsh -NoProfile -File '<HELPER_PATH>\Get-UserSettings.ps1' -SandboxName LogicApps
+~~~
+
+- 保存値とMissingFieldsを確認し、依頼に必要な不足項目だけチャットで質問する。セットアップなら-Purpose Setup、別PC登録なら-Purpose RegisterComputerを使う。生成するアプリID・ObjectId・証明書拇印は事前入力させない。既存アプリを別PCへ登録する場合だけApplicationIdを確認する。
+- 値が揃っている項目を聞き直さない。別名は大文字小文字を区別せず完全一致を優先し、部分一致の候補が複数なら選択を求める。未一致を既定対象へ置き換えない。
+- 基本情報の確認・保存とAzure操作の承認は別。RG・リソース・Sandbox条件は「登録して」「覚えて」などの指示がある場合だけ保存する。一時的に調べた対象を自動登録しない。
+- 保存設定とconnection.jsonのテナント・アプリ・Sandbox・許可サブスクが食い違う場合は停止する。ユーザー設定を書いても接続先・認証・RBACは変わらない。
+- ConnectionPresentは接続ファイルの存在と形式を示す。証明書・Azure接続・現在の権限の検証ではなく、AzureVerifiedは常にfalse。登録対象の種別・所在地・関連IDも保存時点の控えとして扱い、変更前にGETで照合する。
+
+保存はSet-UserSettings.ps1へJSONの部分更新を渡す。以下は構造例。実IDは確認して置換し、秘密情報は入力しない。
+
+~~~powershell
+$patch = @{
+    basic = @{ tenantId='<TENANT_ID>'; sandboxSubscriptionId='<SANDBOX_SUBSCRIPTION_ID>' }
+} | ConvertTo-Json -Depth 8
+$patch | & '<HELPER_PATH>\Set-UserSettings.ps1'
+# -WhatIfなら保存しない
+~~~
+
+### 設定の形式と更新
+
+ルートはschemaVersion=1、basic、targets、sandbox。部分更新で渡さない項目は残す。未対応項目・空値・不正ID・未知の版は拒否し、壊れた既存ファイルを初期化しない。同時更新をロックで排他し、一時ファイルから置き換える。保存失敗時は元ファイルを残して停止する。user-settings.json.lockには設定値を保存しない。
+
+| 区分 | 許可する情報 |
+| --- | --- |
+| basic | tenantId、sandboxSubscriptionId、productionSubscriptionId〔任意〕、applicationId〔既存アプリ〕、displayName。表示名の既定値はazure-ops-skills |
+| targets | alias、kind〔Resource／ResourceGroup〕、service〔AppService／Functions／LogicApps〕、完全なresourceId、location、関連するplanResourceId・storageResourceId |
+| sandbox.LogicApps | resourceGroupName、workflowName、location |
+| sandbox.Functions | resourceGroupName、functionAppName、planName、storageAccountName、location |
+| sandbox.AppServiceFixture | resourceGroupName、planName、appName、location、sku。作成方式は従来どおりLinux |
+| sandbox.WebAppTest | resourceId、planResourceId、peerResourceId、location、operatingSystem〔Windows／Linux〕、sku〔B1／P0v4〕 |
+| sandbox.FunctionsTest | resourceId、planResourceId、storageResourceId、managedIdentityObjectId、location。Flex/Linux/FC1など試験方式の条件は変更しない |
+
+targetsは配列で、各登録にはalias・kind・resourceIdが必要。Resourceにはserviceも必要。aliasは全登録で一意とし、更新時は同じaliasの登録だけを差し替える。RGのIDは候補用であり、RG全体への変更許可には使わない。App ServiceとFunctionsのkind、Logic AppsのConsumption／Standardは実取得して判定する。
+
+sandboxはシナリオごとのオブジェクトで、途中まで保存できる。実行時は明示引数を優先し、不足分だけ登録条件を使う。揃わなければ質問を案内して終了し、固定名・既定リージョンで補完しない。Web App／Functionsの完全ID・割当IDの必須引数は維持する。Remove／Revokeでは保存値から対象を補完せず、対象を明示する。
+
+例のゼロGUIDやプレースホルダーは実行用として拒否する。実設定をテンプレートへ書き戻さない。項目の削除や接続先の移行はこの部分更新コマンドの対象外。必要なら対象と影響を示して個別に案内する。
+
 3サービスの認証処理はscripts/Authentication.ps1で共有し、既存のscripts/Common.ps1から読み込む。独立した事前サインインのスクリプトではない。
 
 ## 必須環境と不足時の案内
@@ -51,3 +99,13 @@ Az.Accountsは依存関係として導入される。モジュール導入後に
 ## ソースと配布先
 
 ソースはリポジトリのscripts、配布先は各SKILL.mdの隣のscriptsを使う。Authentication.ps1はCommon.ps1と一緒に配布する。共通参照はソースのdocs/authentication.mdを配布先のreferences/authentication.mdへ配置する。初期設定・別PC登録の詳細は配布元リポジトリのdocs/setup.md・docs/recovery.mdにあり、これらはスキルには同梱しない。
+
+## 本人サインインを伴う動作確認
+
+Azure管理API・SCMの専用アプリによる証明書認証と、アプリ利用者本人の委任トークン・ブラウザーサインインは別の経路。
+管理アプリの接続失敗を理由に本人や管理者へ切り替えない。本人操作が必要な業務要求は、案件の承認済み動作確認として分ける。
+必要な既存モジュール・MSALの版と利用方法を確認し、共通スキルに案件で使用した版・UPN・クライアントIDを固定しない。
+サインイン用コードは案件内ファイルへ保存し、短いpwsh -NoProfile -Fileコマンドと新規ログ保存先を先に示す。
+トークンはメモリだけで使用し、キャッシュ・本文・認証ヘッダー・任意の例外文を保存しない。ユーザーの完了連絡後は事前指定したログを読んで続行する。
+
+接続・環境の失敗時の停止は、失敗した経路と依存処理に適用する。許可済みの独立した読み取り・ローカル調査の継続条件はchange-workflow.mdの停止境界に従う。

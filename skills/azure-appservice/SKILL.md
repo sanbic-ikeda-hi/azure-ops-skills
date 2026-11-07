@@ -7,6 +7,9 @@ description: Azure App Serviceの現在の構成・状態の取得、既存Web A
 
 ## 認証と対象
 
+開始時にヘルパーのGet-UserSettings.ps1で保存情報と不足項目を確認する。必要な不足分だけチャットで質問し、接続ファイルや生成済みIDで分かる項目は聞き直さない。保存の形式・タイミングは共通認証手順の「ユーザー固有情報の確認と保存」に従う。
+登録済みの別名から完全IDを解決し、曖昧なら候補から選んでもらう。RG・リソース・Sandbox条件は登録を指示されたものだけSet-UserSettings.ps1で保存する。保存情報は接続先・許可範囲・操作承認を変更しない。不一致は自動修正せず止め、変更前は対象・所在地・OS・SKU・関連プランを再取得して照合する。
+
 Windows / PowerShell 7.2以降、Az.Accounts・Az.Resources、専用アプリの接続プロファイルとユーザー証明書を使う。導入・設定変更はユーザーが行う。
 
 Azure操作前に共通認証手順を読む。ソースではリポジトリの `docs/authentication.md`、配布先ではこのSKILL.mdの隣の `references/authentication.md` を使う。同じ作業中に既読で変更がなければ、毎回全文を読み直す必要はない。
@@ -52,7 +55,7 @@ pwsh -NoProfile -File '<HELPER_PATH>\Get-ServiceInventory.ps1' -Service AppServi
 要約は既定20件。取得範囲・TotalCount・Count・ReturnedCount・DisplayTruncatedを区別し、全結果はリポジトリ外の新しい絶対パスへ保存する。RGが分かる場合は-ResourceGroupNameを指定する。3サービスをまとめる依頼だけ-Service Allを使う。
 追加表示は同じscriptsのGet-InventoryReport.ps1 -Path '<SAVED_RESULT_PATH>.txt' -Skip 20 -Limit 20を使い、Azureへ再接続しない。Source=SavedReportと取得日時を示し、変更前は対象を再取得する。詳細な取得・表示方針は共通手順の「読み取りと候補の選択」に従う。
 
-ヘルパーは一覧と基本メタデータのみ。詳細が必要なら、導入済みモジュールの版とMicrosoft LearnでAPI・必要権限を確認する。
+一覧・詳細・認証／SCM診断は対応するヘルパーを使う。未対応の詳細が必要なら、導入済みモジュールの版とMicrosoft LearnでAPI・必要権限を確認する。
 読み取りロールには秘密を取得する操作を含めない。不足する権限は理由を添えてユーザーに案内し、自動追加しない。
 取得日時・接続先・成功/未取得を分ける。失敗を「0件」「設定なし」に置き換えず、キャッシュやIaCを現在の実環境と扱わない。
 
@@ -85,7 +88,7 @@ pwsh -NoProfile -File '<HELPER_PATH>\Get-ServiceInventory.ps1' -Service AppServi
 
 削除、ロール割当の自動追加、ロック解除、管理者への自動認証切替はしない。
 NotActionsは別ロールから与えられた権限を取り消すものではない。残存・継承された変更権限を確認する。
-認証・権限・ネットワーク・環境の失敗時は止めて報告する。管理対象の設定変更を自動再試行しない。
+認証・権限・ネットワーク・環境の失敗は直ちに報告し、失敗した操作と依存する変更を止める。共通手順の停止境界に従い、許可済みで独立した読み取り・ローカル調査は継続できる。同じ拒否要求や設定変更を自動再試行せず、既定の修正回数の停止規則を維持する。
 
 ## 新規作成
 
@@ -115,3 +118,19 @@ Web App、スロット、App Serviceプラン、ランタイム、HTTPS、ネッ
 コード/ローカル検証、ユーザー提供の実行結果、独立したAzure実取得を分けて報告する。
 検証状況は対象・時点・実行主体とともに記録し、その範囲を越えて検証済みと扱わない。ローカルテストの成功だけで本番利用を検証済みとしない。
 試験では共通手順の「Sandboxでの試験」に従い、計画・結果をUTF-8の新規テキストへ保存し、復元・権限解除・後片付けの確認範囲を残す。
+
+## 認証・SCM・配布の追加確認
+
+ソースではdocs/appservice-operations.md、配布先ではこのSKILL.mdの隣のreferences/appservice-operations.mdを読む。
+同じscripts内のGet-AppServiceDiagnostics.ps1は完全なWeb App IDを指定する読み取り診断。既定はAuthenticationだけで、PublishingPolicies・Scmは必要なものだけ明示する。
+新規絶対パス.txtへ段階別の安全なログを保存する。任意項目の失敗後も独立した取得は継続し、部分結果はComplete=falseでエラー終了する。
+未知プロバイダー・未設定・取得失敗を混同しない。legacyMicrosoftAccountとカスタムOIDCも扱い、登録IDがなくenabled=trueという観測を全環境の仕様に一般化しない。
+既存プロバイダーの登録を保護し、未使用の無効化は明示した変更計画と直前・直後GETで確認する。
+
+SCMの403は、enabled・state・scmSiteAlsoStopped、停止応答、IP制限、認証・権限の証拠を分けて診断する。
+配布前の無効化を必須条件にせず、有効化が必要なら認証とメイン／SCMの制限を照合した変更計画へ入れる。403から自動で権限拡大や制限解除をしない。
+OneDeployのasync=trueとzipdeployのisAsync=trueを混同せず、restart=falseで配布完了を確認してから必要な再起動を別操作で行う。
+Runningだけで完了せず、案件で定めたHTTP・未認証拒否・本人による業務要求を別々に記録する。未実施の本人サインイン・PDF生成・メモリ測定を成功としない。
+
+案件内へ実行コードと事前指定ログを準備してからユーザー操作を依頼し、完了連絡後はそのログを読んで続行する。
+IPv4 /32は同じ出口IPの別端末にも一致し、物理的な1台だけの制限ではない。

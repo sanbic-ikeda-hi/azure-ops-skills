@@ -1,5 +1,18 @@
 # 別PCへの復元・証明書更新
 
+## 非秘密のユーザー設定を引き継ぐ
+
+`user-settings.json` は基本情報・明示登録した対象・Sandbox条件だけを含み、Git外のアクセス制限された台帳とともに保管できる。別PCで同じLocalAppData配下へ持ち込む場合も、テナント・サブスク・登録対象を確認する。旧PCのconnection.json・秘密鍵・認証キャッシュは接続設定としてコピーしない。lockファイルも移行不要。
+
+旧PCでGet-UserSettings.ps1を使うと、connection.jsonから取得したApplicationIdも確認できる。新PCでは次をユーザーが実行し、不足する既存ApplicationIdなどだけ入力する。
+
+~~~powershell
+pwsh -NoProfile -File .\scripts\Get-UserSettings.ps1 -Purpose RegisterComputer
+pwsh -NoProfile -File .\scripts\Register-Computer.ps1
+~~~
+
+保存済みの項目は聞き直さない。-NonInteractiveは値が不足すれば停止し、揃っていれば実登録する。新PCの証明書作成・公開証明書登録と読み取り確認は従来どおり必要。ユーザー設定の復元だけで接続・権限が復元されたとは扱わない。
+
 GitHubに秘密鍵を保存しなくても復元できます。スキルとスクリプトをcloneし、同じEntraアプリに新PC専用の公開証明書を追加します。
 Azureのアプリや既存ロール割当はPCに依存しません。PC移行でアプリを作り直したり、全証明書を置き換えたりしません。
 

@@ -8,12 +8,19 @@ param(
     [Parameter(Mandatory)][string]$PeerResourceId,
     [Parameter(Mandatory)][string]$AssignmentId,
     [Parameter(Mandatory)][string]$OutputPath,
+    [ValidatePattern('^[a-z0-9]+$')][string]$ExpectedLocation,
+    [ValidateSet('Windows','Linux')][string]$ExpectedOperatingSystem,
+    [ValidateSet('B1','P0v4')][string]$ExpectedSku,
     [switch]$Execute
 )
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
 $connection=Read-OpsConnection
 $config=Select-OpsSubscription $connection $connection.sandboxSubscriptionId
+$settings=Resolve-OpsSandboxSettings -Name WebAppTest -Connection $connection -Values @{resourceId=$ResourceId;planResourceId=$PlanResourceId;peerResourceId=$PeerResourceId;location=$ExpectedLocation;operatingSystem=$ExpectedOperatingSystem;sku=$ExpectedSku}
+$ExpectedLocation=$settings.location
+$ExpectedOperatingSystem=$settings.operatingSystem
+$ExpectedSku=$settings.sku
 foreach($id in @($ResourceId,$PeerResourceId,$PlanResourceId)) {Assert-OpsResourceScope $id $config.subscriptionId}
 $sitePattern='^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.Web/sites/[^/]+$'
 if($ResourceId -notmatch $sitePattern -or $PeerResourceId -notmatch $sitePattern -or $ResourceId -ieq $PeerResourceId -or
@@ -38,6 +45,7 @@ function Write-TestRecord {
 Write-TestRecord 'Plan' ([ordered]@{
     TenantId=$config.tenantId;SubscriptionId=$config.subscriptionId;ApplicationId=$config.applicationId
     ResourceId=$ResourceId;PlanResourceId=$PlanResourceId;PeerResourceId=$PeerResourceId
+    ExpectedLocation=$ExpectedLocation;ExpectedOperatingSystem=$ExpectedOperatingSystem;ExpectedSku=$ExpectedSku
     UserReportedAssignmentId=$AssignmentId;Execute=[bool]$Execute
     Operations=@('Read baseline','Stop and verify Stopped','Start and verify Running','Set clientAffinityEnabled=true and verify','Restore clientAffinityEnabled=false and verify','Compare peer and plan properties')
     Scope='ARM management properties only; no HTTP content or code test. No RBAC changes or resource deletion.'
@@ -109,10 +117,11 @@ try {
     Write-TestRecord 'Baseline' ([ordered]@{App=$baseline;Peer=$peerBefore;Plan=$planBefore})
     if($baseline.State -ne 'Running' -or $baseline.ClientAffinityEnabled -ne $false -or
         $baseline.HttpsOnly -ne $true -or $baseline.PublicNetworkAccess -ne 'Disabled' -or
-        ($baseline.Location -replace '\s','') -ine 'westus3' -or $baseline.Kind -ine 'app' -or
-        ($planBefore.Location -replace '\s','') -ine 'westus3' -or
-        $planBefore.Reserved -ne $false -or $planBefore.Sku -ine 'P0v4' -or $planBefore.Capacity -ne 1) {
-        throw 'Baseline differs from the reviewed Windows/West US 3/P0v4 isolated-app test. No mutation was started.'
+        ($baseline.Location -replace '\s','') -ine $ExpectedLocation -or
+        ($planBefore.Location -replace '\s','') -ine $ExpectedLocation -or
+        ($baseline.Kind -match '(^|,)linux(,|$)') -ne ($ExpectedOperatingSystem -eq 'Linux') -or
+        $planBefore.Reserved -ne ($ExpectedOperatingSystem -eq 'Linux') -or $planBefore.Sku -ine $ExpectedSku -or $planBefore.Capacity -ne 1) {
+        throw 'Baseline differs from the explicitly reviewed location/OS/SKU isolated-app test. No mutation was started.'
     }
     $stage='Stopping'
     Write-TestRecord $stage @{ResourceId=$ResourceId}
